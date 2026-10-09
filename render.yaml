@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: codebase-history-analyzer
+    runtime: python
+    plan: free
+    buildCommand: pip install -e .
+    startCommand: uvicorn archaeologist.web.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9

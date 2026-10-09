@@ -1,0 +1,116 @@
+{
+  "repository": "pallets/flask",
+  "repo_id": "flask",
+  "total_questions": 6,
+  "average_grounded_accuracy": 0.8898809523809524,
+  "average_fact_entailment_rate": 0.888888888888889,
+  "average_citation_precision": 0.9583333333333334,
+  "average_citation_recall": 0.8416666666666667,
+  "average_citation_f1": 0.8921957671957673,
+  "average_rouge_l_f1": 0.09966575229837339,
+  "results": [
+    {
+      "id": 1,
+      "question": "How does Flask handle request context and application context isolation using ContextVar / LocalProxy in src/flask/globals.py and src/flask/ctx.py?",
+      "expected_answer": "Flask uses ContextVar inside globals.py (_cv_app and _cv_request) to isolate AppContext and RequestContext instances per thread or async task. Access to current_app, g, request, and session is proxied through LocalProxy instances that dynamically resolve the active context.",
+      "generated_answer": "Based on the historical evidence and source implementation in Flask, here is how Flask handles request and application context isolation using `ContextVar` and `LocalProxy`.\n\n### Causal Mechanism of Context Isolation\n\nFlask utilizes Python\u2019s native `contextvars.ContextVar` module combined with Werkzeug\u2019s `LocalProxy` to achieve thread- and asynchronous-safe context isolation without relying on older thread-local architectures. \n\n1. **Context Variables (`ContextVar`)**: \n   In `src/flask/globals.py`, Flask establishes underlying context storage via `ContextVar` (such as `_cv_app`, representing the active application context). Because `ContextVar` is natively managed across asynchronous tasks and threads by the Python runtime, any state pushed or popped from the context remains strictly scoped to the active execution context.\n\n2. **Proxying via `LocalProxy`**:\n   Rather than directly exposing raw contexts to application code, Flask wraps these context variables using Werkzeug's `LocalProxy` objects\u2014exposing globals such as `current_app`, `g`, `request`, and `session`. \n   * When code accesses a proxy like `current_app`, the `LocalProxy` dynamically evaluates the underlying `ContextVar` (e.g., retrieving `_cv_app` and navigating to its `.app` attribute).\n   * If code attempts to access these proxies outside of an active scope, the proxy handles the missing context gracefully by raising descriptive errors configured via parameters like `unbound_message` (e.g., *\u201cWorking outside of application context\u201d*).\n\n3. **Internal Inspection**:\n   Within classes such as `_AppCtxGlobals` in `src/flask/ctx.py`, methods like `__repr__` interact directly with the context variable (e.g., calling `_cv_app.get(None)`) to safely inspect context properties like the active application name without risking pollution across concurrent requests or tasks.\n\n---\n\n### Historical PRs & Linked Issues\n* **Commit SHA:** `9d38d140-d8d3-5494-81c9-1768cbcd8bfd` (Referenced in the transition to native `contextvars` and modern proxy management for Flask globals).",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.1157556270096463,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "question": "How does Flask's Blueprint in src/flask/blueprints.py defer route and view function registration until application initialization via Blueprint.record() and BlueprintSetupState?",
+      "expected_answer": "Blueprint records route definitions and setup callbacks via Blueprint.record() and BlueprintSetupState. When app.register_blueprint() is called, Flask iterates through all recorded state functions and executes them against the application instance.",
+      "generated_answer": "Flask's `Blueprint` decouples route and view function definition from a concrete application instance by leveraging a deferred setup pattern. This design allows developers to define components ahead of time and register them later to any application instance. \n\nHere is how the mechanism works step-by-step:\n\n1. **Recording Deferred Functions (`Blueprint.record()` & `Blueprint.record_once()`):**\n   When decorators (such as `@blueprint.route()`) are used on a `Blueprint` instance, they do not immediately register routes onto a Flask application object because no application exists yet. Instead, these actions are converted into callbacks and appended to the blueprint's `deferred_functions` list via `Blueprint.record()`. `Blueprint.record_once()` wraps a callback to ensure it only executes during the initial registration if a blueprint is mounted multiple times.\n\n2. **Application Registration (`App.register_blueprint()`):**\n   When `app.register_blueprint(blueprint, **options)` is eventually called on the actual Flask application instance, the application invokes the blueprint's registration routines.\n\n3. **Creating the Setup State (`Blueprint.make_setup_state()` & `BlueprintSetupState`):**\n   The application creates a temporary configuration and reference holder known as `BlueprintSetupState` via `blueprint.make_setup_state()`. This state object encapsulates:\n   - A reference to the target application (`self.app`)\n   - A reference to the blueprint (`self.blueprint`)\n   - Registration configuration options (such as `url_prefix`, `subdomain`, and `url_defaults`) merged with user-supplied overrides\n   - A `first_registration` boolean flag to track whether the blueprint has been previously registered on the application.\n\n4. **Executing Deferred Registration (`BlueprintSetupState.add_url_rule()`):**\n   Finally, the blueprint iterates through its recorded deferred functions, executing each one and passing the `BlueprintSetupState` instance as an argument. Helpers like `BlueprintSetupState.add_url_rule()` take this state, automatically prepend the blueprint's `url_prefix` and scoping metadata (such as the dotted endpoint name prefix), and call `self.app.add_url_rule(...)` to finalize registration on the actual application.\n\n### Historical PRs & Linked Issues\n* **Commit `330123258e8c3dc391cbe55ab1ed94891ca83af3`** (Authored by **David Lord**): Encapsulates modular refactoring milestones (including `sansio` structural abstractions for blueprints and applications) that organize setup delegation and route recording behaviors cleanly.",
+      "grounded_accuracy": 0.9571428571428571,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 0.75,
+      "citation_f1": 0.8571428571428571,
+      "rouge_l_f1": 0.12209302325581395,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 3,
+      "question": "How does Flask process error handling hierarchy between app-level error handlers and blueprint-level error handlers in src/flask/app.py via handle_user_exception?",
+      "expected_answer": "Flask maintains app.error_handler_spec dictionary where global errorhandlers use None as key and blueprint errorhandlers use the blueprint name. When handle_user_exception handles an error, it checks blueprint-specific handlers first before falling back to global handlers.",
+      "generated_answer": "Based on the historical implementation and codebase evidence, Flask processes error handling hierarchies in `src/flask/app.py` via `handle_user_exception` by incorporating the request's blueprint ancestry. \n\n### How the Error Handling Hierarchy Works\n\n1. **HTTP Exceptions vs. User Exceptions:** When an exception occurs, `handle_user_exception` first checks if the exception is an instance of `HTTPException` (and not trapped). If so, it delegates to `handle_http_exception`. Otherwise, it proceeds to lookup user-defined error handlers.\n2. **Blueprint Hierarchy Resolution (`ctx.request.blueprints`):** To locate a matching error handler, Flask calls `self._find_error_handler(e, ctx.request.blueprints)`. \n3. **Lookup Precedence:** The request object exposes a `.blueprints` property (derived from `ctx.request.blueprint` and split via `_split_blueprint_path`), which lists the current blueprint name *upwards through its parent blueprints*. This ensures that Flask checks more specific, nested blueprint-level error handlers first, traversing up the blueprint hierarchy, before ultimately falling back to application-level handlers.\n4. **Application-wide Blueprint Handlers:** Note that blueprints can also register application-wide error handlers using `app_errorhandler` (which delegates directly to `state.app.errorhandler`), ensuring they behave identically to application-level handlers rather than scoping strictly to the blueprint's request context.\n\n---\n\n### Historical PRs & Linked Issues\n\nWhile specific PR numbers and tracked issues are omitted from the immediate text blocks, the implementation relies directly on the tree structures and codebase updates managed under commit SHAs associated with codebase formatting and maintenance by author David Lord.\n\n* **Commit `54e05a282428e9a44dbd414ca70231a83ebd710d`** (Author: David Lord)\n  * *Summary:* Modernized and formatted codebase structures (`src/flask/app.py`, `src/flask/sansio/app.py`, etc.) ensuring accurate routing and error handler precedence tracking (`test_errorhandler_precedence`).\n* **Commit `54ff9b297276a3add08c8faf1557b5e359b3ab99`** (Author: David Lord)\n  * *Summary:* Parallel tree stabilization commit incorporating ruff linter/formatter compliance across core Flask request context and blueprint handling logic.",
+      "grounded_accuracy": 0.4904761904761904,
+      "fact_entailment_rate": 0.3333333333333333,
+      "citation_precision": 1.0,
+      "citation_recall": 0.75,
+      "citation_f1": 0.8571428571428571,
+      "rouge_l_f1": 0.10493827160493827,
+      "proposition_evaluations": [
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "id": 4,
+      "question": "How does Flask integrate with Click in src/flask/cli.py to create CLI command groups and locate application instances?",
+      "expected_answer": "FlaskGroup and AppGroup in src/flask/cli.py extend click.Group. ScriptInfo uses find_best_app() to locate and import the target Flask application instance before executing Click CLI commands.",
+      "generated_answer": "### Flask and Click Integration in `src/flask/cli.py`\n\nFlask integrates with Click in `src/flask/cli.py` to bridge the command-line interface with Flask application instances and their contexts through customized group and command wrappers:\n\n1. **`AppGroup`**:\n   - Subclasses `click.Group` to modify the behavior of the `.command()` decorator. \n   - Automatically wraps registered command callbacks with an application context via `with_appcontext` (unless explicitly disabled by passing `with_appcontext=False`). This ensures that database connections, configuration variables, and other context-dependent operations are fully accessible when executing commands.\n\n2. **`FlaskGroup`**:\n   - Extends `AppGroup` to serve as the primary entry point for managing Flask applications (`flask` command).\n   - Handles deferred loading of application instances, automatically provisions plugin commands via entry points (`flask.commands`), and injects custom arguments/options (such as `--app`, `--debug`, and environment files).\n\n3. **Locating Application Instances (`find_best_app` & `ScriptInfo.load_app`)**:\n   - Flask dynamically locates application instances by searching modules for predefined naming conventions or factories.\n   - It checks explicit attributes first (`app` or `application`), scans for unique `Flask` instances within the module's dictionary namespace, and finally looks for standard application factory callables (such as `create_app` or `make_app`).\n\n---\n\n### Historical PRs & Linked Issues\n\n* **Commit `6000e80acf931b05b4911c3fa7f3ba33e2b80e64`** (Author: **David Lord**)\n  - *Summary*: Addressed mypy strict findings across the codebase, specifically ensuring strict typing compliance within `src/flask/cli.py` components like `AppGroup`, `FlaskGroup`, `ScriptInfo`, and application discovery functions (`find_best_app`, `locate_app`, etc.).\n* **Commit `8285adf5a4f572dbf7a0a3b8f3a96ca0b19c50a4`** (Author: **David Lord**)\n  - *Summary*: Updated development dependencies and performed code refinements affecting parameter types and debug configurations in `src/flask/cli.py`.",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.10218978102189781,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 5,
+      "question": "How does SecureCookieSessionInterface in src/flask/sessions.py sign and validate session cookie data against tampering?",
+      "expected_answer": "SecureCookieSessionInterface uses itsdangerous.URLSafeTimedSerializer with the application secret_key and cookie-session salt to serialize, cryptographic sign, and verify session cookie data.",
+      "generated_answer": "`SecureCookieSessionInterface` in Flask signs and validates session cookie data against tampering by leveraging the `itsdangerous` module's cryptographic utilities. \n\n### How Signing and Validation Work\n\n1. **Serializer Initialization (`get_signing_serializer`)**: \n   When an application has a configured `secret_key` (along with optional `SECRET_KEY_FALLBACKS` introduced in commit `e13373f838ab34027c5a80e16a6cb8262d41eab7`), `SecureCookieSessionInterface` constructs an `itsdangerous.URLSafeTimedSerializer`. \n   - **Key Derivation & Digest**: It applies an HMAC-based key derivation (`key_derivation = \"hmac\"`) and a lazy-loaded SHA-1 digest method (`digest_method = staticmethod(_lazy_sha1)`), which delays accessing `hashlib.sha1` at runtime to ensure compatibility with restricted FIPS builds (added in commit `db461112c70d5f2bf93c7a6ac27eeb665c232dd0`).\n   - **Salt**: It enforces a fixed namespace separation using the default salt (`salt = \"cookie-session\"`).\n   - **Key Rotation**: When fallback keys are present, they are collected alongside the primary `app.secret_key` so that older yet still valid signatures can be successfully decoded during key rotation (refined further in commit `fb54159861708558b5f5658ebdc14709d984361c`).\n\n2. **Tamper-Evident Storing (`save_session`)**:\n   When saving the session, the dictionary data is serialized and cryptographically signed via `s.dumps(dict(session))` before being dispatched to the client browser as a cookie.\n\n3. **Validation and Rejection (`open_session`)**:\n   When incoming requests are processed, `open_session` extracts the cookie value and invokes `s.loads(val, max_age=max_age)`. \n   - The serializer verifies the cryptographic signature against the active keys and salt.\n   - It enforces maximum age expiration rules based on `app.permanent_session_lifetime`.\n   - If the signature is invalid, payload corruption is detected, or the maximum age is exceeded, `itsdangerous` raises a `BadSignature` exception. The interface catches this exception cleanly and falls back to returning an empty session class (`self.session_class()`).\n\n---\n\n### Historical Commits & Authors\n\n- **Commit `e13373f838ab34027c5a80e16a6cb8262d41eab7`** (Author: *David Lord*): Enabled secret key rotation by introducing `SECRET_KEY_FALLBACKS` support into `get_signing_serializer`.\n- **Commit `fb54159861708558b5f5658ebdc14709d984361c`** (Author: *James Addison*): Fixed the key list ordering for `itsdangerous` during key rotation to align with expected index positioning (active key at the end, fallbacks ordered appropriately).\n- **Commit `db461112c70d5f2bf93c7a6ac27eeb665c232dd0`** (Author: *David Lord*): Implemented lazy SHA-1 loading (`_lazy_sha1`) to prevent premature import failures on FIPS-compliant environments that lack SHA-1.\n- **Commit `9efc1ebeeb431769897798cdf8de2c67dcbbc9c0`** (Authors: *David Lord*, *Jose Cespedes*): Added `SESSION_COOKIE_PARTITIONED` config updates affecting cookie creation attributes.",
+      "grounded_accuracy": 0.9249999999999999,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 0.75,
+      "citation_recall": 0.75,
+      "citation_f1": 0.75,
+      "rouge_l_f1": 0.07282913165266107,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 6,
+      "question": "How does full_dispatch_request in src/flask/app.py orchestrate the lifecycle of request hooks, dispatching, and response processing?",
+      "expected_answer": "full_dispatch_request runs preprocess_request (before_request hooks) first. If no hook returns a response, it dispatches to dispatch_request (view function), converts the return value via make_response, and passes the response through process_response (after_request hooks).",
+      "generated_answer": "Based on the historical evidence and source code, `full_dispatch_request` in `src/flask/app.py` acts as the primary orchestrator for the request lifecycle, decoupling request preprocessing, routing, user exception handling, and final response processing from the lower-level WSGI handling (`wsgi_app`). \n\n### Lifecycle Orchestration Breakdown\n\n1. **Initialization & Signals**:\n   - The method updates the application state by setting the `_got_first_request` flag to `True`.\n   - It dispatches the `request_started` signal (`request_started.send(...)`) to notify extensions and listeners that a request context is active and processing is beginning. (Historical commits like `c77a5203` by David Lord also handled deprecation warnings regarding `should_ignore_error` within this initialization window).\n\n2. **Preprocessing (`preprocess_request`)**:\n   - Flask runs any registered `before_request` hooks via `preprocess_request(ctx)`. \n   - If any `before_request` function returns a non-`None` value (`rv`), short-circuiting occurs: preprocessing stops, and that return value is treated directly as the response.\n\n3. **Dispatching (`dispatch_request`)**:\n   - If preprocessing returns `None` (`rv is None`), the request is matched and routed via `dispatch_request(ctx)`. This checks for routing exceptions, handles automatic `OPTIONS` requests if enabled, and executes the target view function (or view method via `MethodView.dispatch_request`) along with its URL arguments.\n\n4. **Exception Handling**:\n   - Any `Exception` raised during the preprocessing or dispatching phases is caught by a `try...except Exception as e:` block.\n   - Caught exceptions are passed to `handle_user_exception(ctx, e)`, which either routes `HTTPException` instances (unless trapped) or looks up user-registered custom error handlers. If no handler matches, the exception is re-raised.\n\n5. **Response Finalization (`finalize_request`)**:\n   - Regardless of whether execution succeeded normally or yielded an error response via handlers, the final return value or error response (`rv`) is passed to `finalize_request(ctx, rv)` for post-processing (such as running `after_request` callbacks and converting return values into proper WSGI response objects).\n\n---\n\n### Historical PRs & Linked Issues\n- **PR #4840**: Authored by Jonah Lawrence. Added `.svg` file extension support to `select_jinja_autoescape`, updating template autoescaping defaults and associated methods (such as `dispatch_request` and `log_exception`).\n- **Commit `c77a5203`**: Authored by David Lord. Deprecated the legacy `should_ignore_error` mechanism inside `full_dispatch_request` and `wsgi_app` in favor of handling errors in teardown handlers.\n- **Commit `6a649690`**: Authored by David Lord. Refactored internal dispatch methods across `src/flask/app.py` to explicitly pass the application/request context (`AppContext`) through request methods like `full_dispatch_request`, `dispatch_request`, and `finalize_request`.\n- **Commit `44ffe6c6`**: Authored by David Lord. Introduced `__future__` annotations across `src/flask/app.py` and application modules to modernize type hinting and deferred evaluation.",
+      "grounded_accuracy": 0.9666666666666666,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 0.8,
+      "citation_f1": 0.888888888888889,
+      "rouge_l_f1": 0.08018867924528301,
+      "proposition_evaluations": [
+        true,
+        true,
+        true,
+        true
+      ]
+    }
+  ]
+}

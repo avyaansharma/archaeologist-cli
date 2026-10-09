@@ -1,0 +1,71 @@
+# Python Bytecode & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+ENV/
+
+# Build & Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Testing & Linting Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Archaeologist Local Indexes & Storage
+*.db
+*.db-shm
+*.db-wal
+*.bin
+*.sqlite
+*.sqlite3
+!eval/data/*.db
+!eval/data/*.bin
+eval/data/*.db-shm
+eval/data/*.db-wal
+qdrant_db/
+qdrant_storage/
+qdrant_storage_local/
+.archaeologist/
+
+# Internal Agent Iteration Logs & Forensic Scratchpads
+context.md
+bugs.md
+recentbugs.md
+learning_proposal.md
+AGENTS.md
+.agents/
+.github/
+scratch/
+graphify-out/
+brag-output/
+
+# Logs & Temporary Files
+*.log
+*.tmp
+*.temp
+
+# IDEs & OS Metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~

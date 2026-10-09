@@ -1,0 +1,15 @@
+gradio>=4.44.0
+fastapi>=0.115.0
+uvicorn>=0.34.0
+sse-starlette>=2.2.1
+sqlmodel>=0.0.22
+rank-bm25>=0.2.2
+qdrant-client>=1.13.0
+google-genai>=1.0.0
+langgraph>=0.2.70
+pydantic>=2.10.0
+GitPython>=3.1.44
+typer>=0.15.0
+rich>=13.9.0
+requests>=2.32.0
+marked>=0.1.0

@@ -1,0 +1,143 @@
+{
+  "repository": "BoboTiG/python-mss",
+  "repo_id": "mss",
+  "eval_type": "ground_truth_causal_why",
+  "total_questions": 5,
+  "average_grounded_accuracy": 0.8676666666666666,
+  "average_fact_entailment_rate": 0.8666666666666666,
+  "average_citation_precision": 0.82,
+  "average_citation_recall": 0.95,
+  "average_citation_f1": 0.8699999999999999,
+  "average_rouge_l_f1": 0.20203549102931473,
+  "results": [
+    {
+      "id": 1,
+      "question": "The Windows capture backend once cached the region being grabbed for performance. A fix was written in commit 5e5f3ee to correct a bug where two same-size regions at different screen positions could return a wrong/stale screenshot. That fix was reverted in commit 2d24115 just days later. Why was it reverted, and what happened to the test that was added alongside it?",
+      "expected_answer": "The original bug (commit 5e5f3ee) was that the Windows GDI backend's region cache compared only (height, width) when deciding whether to reallocate the cached bitmap, so two regions of the same size but different (top, left) position incorrectly reused a stale bitmap sized correctly but positioned wrong. The fix changed the check to compare the full region dict instead of just height/width, and added a regression test (test_region_caching) asserting the cache updates when position changes. Three days later this fix was reverted (commit 2d24115) with the message 'The patch was indeed a bad idea and fixed nothing' \u2014 the author reverted the actual code change but explicitly kept the added test in place rather than removing it.",
+      "generated_answer": "The Windows capture backend previously implemented a caching mechanism intended to improve performance by storing the region being grabbed. However, this approach introduced a bug where two regions of identical dimensions, but located at different screen coordinates, would return stale or incorrect screenshot data.\n\n### Why the Fix Was Reverted\nThe fix introduced in commit **5e5f3ee** was reverted in commit **2d24115** by maintainer **Micka\u00ebl Schoentgen**. The revert was performed because the maintainer concluded that the original patch \"fixed nothing\" and was fundamentally a \"bad idea.\" The caching logic was subsequently removed to ensure the correctness of the capture output, prioritizing data integrity over the performance optimization that had caused the regression.\n\n### Status of the Test Case\nWhile the functional fix was reverted, the test case added alongside the original patch was intentionally preserved in the codebase. The maintainer explicitly noted in the commit message for **2d24115** that they \"reverted it but kept the test,\" ensuring that the scenario involving same-size regions at different positions remains covered by the test suite to prevent future regressions of the same nature.\n\n### Historical PRs & Linked Issues\n*   **Commit 5e5f3ee**: Original attempt to fix region caching issues.\n*   **Commit 2d24115**: Revert of the caching fix by **Micka\u00ebl Schoentgen**, with the explicit decision to retain the associated test case.",
+      "expected_evidence": [
+        "5e5f3ee",
+        "2d24115"
+      ],
+      "difficulty": "hard",
+      "blind_test_notes": "High confidence this is not guessable: requires knowing the exact revert happened, that it was 3 days after the original fix, that the fix looked correct (passing test) but 'fixed nothing', and the specific detail that the test was kept despite the code being reverted. No general GDI/screenshot-caching knowledge would produce this.",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.20183486238532108,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "question": "In PR #452 (commit 06dc845), this library moved from a single global thread lock protecting all internal state to per-object locking. What was the stated reason for the change, and which specific backend still needed to keep a global (not per-object) lock, and why?",
+      "expected_answer": "PR #452 (commit 06dc845) replaced a single global lock with per-object locks, stating the global lock 'provides too much of a surface for contention and deadlocks.' The Xlib backend specifically was called out as still needing global locking, because Xlib itself is not thread-safe and the library wasn't enabling the (partial) thread-safety features Xlib offers, so Xlib kept its own dedicated lock object separate from the new per-object scheme used elsewhere.",
+      "generated_answer": "In PR #452 (commit 06dc845), the library transitioned from a single global thread lock to per-object locking to address significant performance and stability issues.\n\n### Reason for the Change\nThe primary motivation for this architectural shift was to reduce the **surface area for contention and deadlocks**. Under the previous global locking scheme, all operations across all instances of the library were serialized, creating a bottleneck. By moving to per-object locking, the library allows concurrent operations on independent objects, significantly improving performance in multi-threaded environments.\n\n### The Xlib Backend Exception\nThe **Xlib backend** (`src/mss/linux/xlib.py`) is the only implementation that continues to utilize a global lock. This is necessary because:\n*   **Lack of Thread Safety:** The underlying Xlib library is not inherently thread-safe.\n*   **Configuration:** The library does not enable the specific Xlib features (such as `XInitThreads()`) that would provide the necessary thread-safety guarantees for concurrent access.\n\nConsequently, while other backends transitioned to per-object locks, the Xlib backend maintains its own dedicated global `_lock` object to serialize access to Xlib calls and prevent race conditions.\n\n### Historical PRs & Linked Issues\n*   **PR #452:** \"fix: use per-object locking instead of global locking\"\n    *   **Author:** Joel Holveck\n    *   **Commit:** 06dc84550512de2edef633019c849ea48b11b39a\n    *   **Summary:** Implemented per-object locking to mitigate contention and deadlocks, while isolating the Xlib backend to a global lock due to its lack of thread safety. The PR also included documentation updates regarding multithreading guarantees and added a test case to verify that the same `MSS` object can be used across multiple threads.",
+      "expected_evidence": [
+        "06dc845",
+        "pr#452",
+        "PR #452"
+      ],
+      "difficulty": "medium",
+      "blind_test_notes": "Medium-high confidence: a model might guess 'global locks cause contention, so they moved to finer-grained locking' as a generic pattern, but the specific carve-out for Xlib being non-thread-safe and needing to retain a global lock is a repo-specific detail unlikely to be guessed correctly.",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.2378048780487805,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 3,
+      "question": "In PR #467 (commit 0822b33) and PR #468 (commit 9637209), a fix for a KeyboardInterrupt-related bug during buffer copying in the Linux capture backend was reworked. What was the original bug, and what specifically changed in the follow-up PR #468?",
+      "expected_answer": "In the XShmGetImage backend, there was a window during buffer copying where a KeyboardInterrupt (or other async exception) hitting mid-copy would cause cleanup to raise a different, confusing exception instead of letting the original KeyboardInterrupt propagate to the user (PR #467, commit 0822b33). The stated goal was not full correctness under async exceptions, just avoiding a misleading secondary exception. The follow-up (PR #468, commit 9637209) reworked the fix after the author 'just learned that memoryviews can be used as context managers' and release their buffers automatically at the end of a `with` block, replacing the original approach with this simpler pattern.",
+      "generated_answer": "The original bug in the Linux `XShmGetImage` backend was a race condition occurring during the buffer-copying process. Because this operation is computationally intensive, it created a significant window of time where an asynchronous exception\u2014most commonly a `KeyboardInterrupt` (triggered by a user pressing Ctrl-C)\u2014could occur. When this happened, the backend's cleanup logic would trigger, but because the system was in an inconsistent state, the cleanup itself would raise a secondary, confusing exception. This masked the original `KeyboardInterrupt`, leading to a poor user experience where the program appeared to crash with an unrelated error rather than exiting gracefully.\n\n### Changes in PR #467 and PR #468\n*   **PR #467 (commit 0822b33):** Introduced the initial fix to suppress the secondary cleanup exception. By catching the error during the cleanup phase, the implementation ensured that the user would see the intended `KeyboardInterrupt` instead of the misleading cleanup-related error.\n*   **PR #468 (commit 9637209):** Refined the implementation by moving away from reliance on Python's garbage collection to manage buffer lifecycles. The author, Joel Holveck, implemented a simpler approach by utilizing `memoryview` objects as context managers. This allows the buffers to be released deterministically at the end of the context, which is more robust and avoids the race conditions inherent in the previous GC-dependent cleanup mechanism.\n\n### Historical PRs & Linked Issues\n*   **PR #467 (commit 0822b33):** Authored by Joel Holveck. Addressed the `KeyboardInterrupt` cleanup exception by suppressing the secondary error during the buffer-copying process.\n*   **PR #468 (commit 9637209):** Authored by Joel Holveck. Improved the fix from PR #467 by switching to `memoryview` context managers for more reliable buffer release, further mitigating the race condition window.",
+      "expected_evidence": [
+        "0822b33",
+        "9637209",
+        "pr#467",
+        "pr#468",
+        "PR #467",
+        "PR #468"
+      ],
+      "difficulty": "hard",
+      "blind_test_notes": "High confidence: the specific detail that the second PR's motivation was the author personally learning about memoryview context-manager semantics, rather than a bug in the first fix, is a very specific, personal, undocumented-elsewhere detail that general knowledge of Python or screenshot libraries would not produce.",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.25,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "question": "In PR #494 / Issue #486 (commit 8a7bbc2), the library's internal architecture was reworked to use a strategy implementation design with a single top-level MSS class. What issue motivated this, and what specifically got deprecated as a result?",
+      "expected_answer": "PR #494 (commit 8a7bbc2) moved the library to a strategy-pattern design, citing issue #486 as the motivation. The change hides platform/capture-strategy differences behind a single mss.MSS class rather than exposing different implementation classes per platform, so internal class hierarchies could change freely without breaking user code. This deprecated both the existing `mss` factory function and the per-platform `mss.{platform}.MSS` types, with a stated plan to keep the factory function available for a transition period while deprecated functionality emits DeprecationWarnings.",
+      "generated_answer": "The architectural rework introduced in **PR #494** (commit `8a7bbc2`) by **Joel Holveck**, which references **Issue #486**, was motivated by the need to decouple the library's public API from its internal class hierarchies. \n\nPrior to this change, the library exposed platform-specific classes directly to the user. This tight coupling made it difficult for maintainers to perform significant internal refactoring or modify class structures without risking breaking changes for users. By transitioning to a **strategy implementation design**, the library now uses a single top-level `mss.MSS` class that delegates platform-specific logic to an internal implementation object. This abstraction allows the internal architecture to evolve freely while maintaining a stable, consistent public interface.\n\n### Deprecations\nAs a result of this architectural shift, the following components were deprecated in favor of using `mss.MSS` directly:\n*   **`mss.mss`**: The factory function used to instantiate the library.\n*   **`mss.{platform}.MSS`**: The platform-specific classes (e.g., `mss.linux.MSS`, `mss.darwin.MSS`, `mss.windows.MSS`).\n*   **`mss.base.MSSBase`**: The base class previously used for type declarations.\n\nWhile these components were deprecated to encourage the use of the new API, they were maintained for a transition period to ensure backward compatibility.\n\n### Historical PRs & Linked Issues\n*   **PR #494**: \"Move to a strategy implementation design\" (Author: **Joel Holveck**). This PR implemented the core architectural change and introduced the `mss.MSS` top-level class.\n*   **Issue #486**: Referenced by PR #494 as the primary motivation for the architectural rework.\n*   **Issue #517**: Referenced in code comments (e.g., `src/mss/factory.py`, `src/mss/windows/__init__.py`) as the tracking issue for removing the compatibility paths and legacy symbols once the 10.x transition period concludes.\n*   **PR #518**: \"chore: remove some 10.2 compat symbols, and retag retained compat symbols\" (Author: **Joel Holveck**). This PR cleaned up the compatibility surface following the initial rework.",
+      "expected_evidence": [
+        "8a7bbc2",
+        "pr#494",
+        "PR #494",
+        "issue#486",
+        "Issue #486"
+      ],
+      "difficulty": "medium",
+      "blind_test_notes": "Medium confidence: 'moved to strategy pattern for extensibility' is a somewhat guessable generic architecture narrative, but the specific linked issue number and the precise two things deprecated (the factory function AND the per-platform types) are specific enough that a blind guess is unlikely to get both right.",
+      "grounded_accuracy": 0.9249999999999999,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 0.6,
+      "citation_recall": 1.0,
+      "citation_f1": 0.7499999999999999,
+      "rouge_l_f1": 0.18461538461538463,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 5,
+      "question": "In PR #426 (commit 8575606) and PR #431 (commit 712503a), two different low-level backends for capturing screenshots on Linux via X11 were introduced (XCB getimage and XShmGetImage shared memory). Why was the XShmGetImage backend added over the standard XGetImage backend, and what performance difference was reported in PR #431?",
+      "expected_answer": "PR #426 (commit 8575606) first added an XCB-based backend named 'getimage' as a replacement path for the older Xlib implementation, which was explicitly designated 'legacy' status per issue #425 (new functionality like XShmGetImage would not be added to the Xlib backend going forward). PR #431 (commit 712503a) then added the XShmGetImage-based backend using the X MIT-SHM extension for shared-memory transfer. The PR description reports a concrete benchmark from the author's own machine: the new shared-memory backend achieved 30-34 fps capturing 4k screenshots, versus 11-14 fps for the existing XGetImage-based approach \u2014 roughly a 3x throughput improvement.",
+      "generated_answer": "The `XShmGetImage` backend was introduced to address the performance bottleneck inherent in the standard `XGetImage` backend: the mandatory CPU-side copy of screenshot data from OS-supplied buffers into Python-owned objects (e.g., `bytearray`). \n\n### Why `XShmGetImage` was added\nThe standard `XGetImage` backend (implemented in `src/mss/linux/xgetimage.py`) requires an explicit copy of pixel data to ensure memory safety, as the underlying XCB structures are transient and cannot be safely referenced by downstream consumers like NumPy or Pillow once the request structure is cleared. \n\nThe `XShmGetImage` backend (introduced in PR #431, commit `712503a`) utilizes the MIT-SHM extension to share memory between the X server and the client. This was later optimized in PR #539 (commit `84cba08ae7e74ffa4d5c1610447532cd9cae3f5a`) by implementing a reusable shared memory (SHM) slot pool and buffer lifetime tracking. This infrastructure allows the backend to expose the SHM-backed storage directly to Python 3.12+ users, effectively enabling a \"zero-copy\" capture path.\n\n### Performance Impact\nBenchmarks reported by Joel Holveck in PR #539 (commit `84cba08ae7e74ffa4d5c1610447532cd9cae3f5a`) demonstrated that eliminating the CPU-side copy significantly improved throughput. Testing on a Ryzen 7 2700X system with 3840\u00d72160 resolution screenshots showed:\n* **Capture time:** Reduced from 22.64 ms to 18.59 ms per frame.\n* **Frame rate:** Increased from 44 FPS to 54 FPS (an approximately 18% performance improvement).\n\n### Historical PRs & Linked Issues\n* **PR #426 (commit `8575606`):** Introduced the initial XCB-based `XGetImage` backend.\n* **PR #431 (commit `712503a`):** Introduced the `XShmGetImage` backend to provide a faster alternative to `XGetImage` via shared memory.\n* **PR #539 (commit `84cba08ae7e74ffa4d5c1610447532cd9cae3f5a`, Author: Joel Holveck):** Implemented buffer lifetime tracking and the zero-copy mechanism for Python 3.12+, providing the documented performance benchmarks.\n* **PR #468 (commit `96372099037a2ff404119b785e28c43647109522`, Author: Joel Holveck):** A follow-up fix for the `XShmGetImage` backend that resolved issues with `KeyboardInterrupt` during cleanup and simplified the implementation by utilizing memoryviews as context managers.",
+      "expected_evidence": [
+        "8575606",
+        "712503a",
+        "pr#426",
+        "pr#431",
+        "PR #426",
+        "PR #431",
+        "issue#425",
+        "Issue #425"
+      ],
+      "difficulty": "hard",
+      "blind_test_notes": "High confidence: the specific FPS numbers (30-34 vs 11-14) and the framing that Xlib was designated legacy 'per issue #425' are precise, sourced facts that general knowledge of X11/screenshot libraries would not reproduce, even though 'shared memory is faster than round-tripping image data' is a guessable general principle on its own.",
+      "grounded_accuracy": 0.41333333333333333,
+      "fact_entailment_rate": 0.3333333333333333,
+      "citation_precision": 0.5,
+      "citation_recall": 0.75,
+      "citation_f1": 0.6,
+      "rouge_l_f1": 0.1359223300970874,
+      "proposition_evaluations": [
+        true,
+        false,
+        false
+      ]
+    }
+  ]
+}

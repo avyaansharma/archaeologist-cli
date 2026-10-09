@@ -1,0 +1,81 @@
+{
+  "repository": "psf/requests",
+  "repo_id": "requests",
+  "total_questions": 4,
+  "average_grounded_accuracy": 0.9326555023923444,
+  "average_fact_entailment_rate": 1.0,
+  "average_citation_precision": 0.7142857142857143,
+  "average_citation_recall": 0.9583333333333334,
+  "average_citation_f1": 0.7755183413078149,
+  "average_rouge_l_f1": 0.09192074856916355,
+  "results": [
+    {
+      "id": 1,
+      "question": "How does Session.send() in requests/sessions.py handle request preparation, redirect history tracking, connection pool adapter dispatching, and cookie persistence?",
+      "expected_answer": "Session.send() dispatches the prepared request to the registered adapter (HTTPAdapter), manages request redirects using resolve_redirects(), records redirect history in response.history, and merges response cookies back into Session.cookies.",
+      "generated_answer": "Based on the implementation in `requests/sessions.py` and its supporting historical record, `Session.send()` handles the request lifecycle through several distinct mechanisms:\n\n### 1. Request Preparation & Defaults\n* **Default Parameter Injection:** It sets default fallback values for `stream`, `verify`, `cert`, and resolves environment-aware `proxies` using `resolve_proxies(request, self.proxies, self.trust_env)` if not explicitly provided in `kwargs`.\n* **Type Guarding & Timing:** It explicitly checks if an accidental raw `Request` object was passed instead of a `PreparedRequest`, raising a `ValueError` if so. It also measures the total approximate roundtrip execution duration using `preferred_clock()` to populate `r.elapsed`.\n\n### 2. Connection Pool Adapter Dispatching\n* **Transport Selection:** It dynamically maps the target destination by calling `self.get_adapter(url=request.url)`, which iterates through the session's registered transport prefixes to find the matching connection adapter (raising an `InvalidSchema` error if none match).\n* **Delegation:** The actual transmission is delegated to the retrieved adapter via `adapter.send(request, **kwargs)`.\n\n### 3. Cookie Persistence\n* **Response & History Syncing:** It extracts cookies from the raw socket responses and persists them into the session's cookie jar (`self.cookies`) using `extract_cookies_to_jar()`. This is performed iteratively for both any intermediary responses captured inside `r.history` and the primary final response.\n\n### 4. Redirect History Tracking\n* **Resolution & Construction:** When redirects are enabled (`allow_redirects=True`), it evaluates redirect responses via `self.resolve_redirects()`. \n* **Self-Reference Prevention:** The generator yields chronological responses into a history list. As addressed historically in PR #7328 by Nate Prewitt (commit `ef439eb779c1eba7cbdeeeb302b11e1e061b4b7d`), logic ensures that responses do not self-reference within their own redirect history arrays. \n* **State Shifting:** If history entries are present, the original request is inserted at the head (`history.insert(0, r)`), the final terminal response becomes the active response object, and its `.history` attribute is assigned the compiled list. When redirects are disabled, `r._next` is alternatively staged for manual stepping.\n\n---\n\n### Historical PRs & Linked Issues\n* **PR #7328** (Commit `ef439eb779c1eba7cbdeeeb302b11e1e061b4b7d`, authored by Nate Prewitt): Prevented `Response` self-reference bugs within redirect history handling.",
+      "grounded_accuracy": 0.9727272727272727,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 0.8333333333333334,
+      "citation_f1": 0.9090909090909091,
+      "rouge_l_f1": 0.0906515580736544,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "question": "How does HTTPAdapter in requests/adapters.py configure urllib3 connection pooling, max_retries, and SSL verification?",
+      "expected_answer": "HTTPAdapter initializes urllib3 PoolManager via init_poolmanager(), sets max_retries on the connection manager, and injects SSL verification context (cert_reqs, ca_certs, ssl_version) into pool connections during request transmission.",
+      "generated_answer": "Based on the codebase evidence from `src/requests/adapters.py` and the historical git record, `HTTPAdapter` configures connection pooling, maximum retries, and SSL verification as follows:\n\n* **Connection Pooling:** \n  Configured primarily via `__init__` and `init_poolmanager`. When an `HTTPAdapter` is instantiated, parameters such as `pool_connections`, `pool_maxsize`, and `pool_block` are stored and passed directly to initialize a urllib3 `PoolManager` (or `ProxyManager`/`SOCKSProxyManager` for proxies). These values dictate the number of cached connection pools, maximum connection limits per pool, and blocking behaviors.\n\n* **Maximum Retries:** \n  Handled during `HTTPAdapter.__init__`. If the default retry parameter is supplied, it configures a urllib3 `Retry` object (`Retry(0, read=False)`), meaning Requests does not retry failed connections by default unless explicitly configured. Otherwise, integer values or custom `Retry` instances are converted using `Retry.from_int(max_retries)`.\n\n* **SSL Verification:** \n  Handled dynamically per-request in the `cert_verify()` method when sending requests over HTTPS. Depending on the `verify` argument (a boolean or a path string pointing to a CA bundle) and the `cert` argument (client certificates or key paths), `cert_verify` configures connection attributes such as `cert_reqs`, `ca_certs`, `ca_cert_dir`, `cert_file`, and `key_file`. \n\n---\n\n### Historical PRs & Linked Issues\n* **PR #6710** (referenced in deprecation warnings for `get_connection` in favor of `get_connection_with_tls_context`).\n* **PR #6767 / Commit `90fee0876aea97c639b3bf698d83a12876d2f160`** (Nate Prewitt): Reverted caching a default `SSLContext` to prevent issues with custom poolmanager keywords.\n* **PR #7272 / Commit `561e4b6889f53584c39a67f8794c53a414f68481`** (Nate Prewitt): Added inline type annotations across `adapters.py`.\n* **PR #7292 / Commit `e331a288f369973f5de0ec8901c94cae4fa87286`** (Nate Prewitt): Removed unused extraction calls.\n* **PR #7395 / Commit `27e0981962d355b9532256f4dcb3d42f64b04d9c`** (Dimitri Papadopoulos Orfanos): Fixed remaining typos.\n* **Additional Commits:** \n  * `b1d73ddb509a3a2d3e10744e85f9cdebdbde90f0` (Nate Prewitt): Adjusted handling of default `SSLContext` with custom pool manager kwargs.\n  * `3f07f990ac74f1e1691ba17ef8c14007f05846ab` (Jonas Fonseca): Fixed documentation typos regarding `verify`.\n  * `92075b330a30b9883f466a43d3f7566ab849f91b` (Nate Prewitt): Added deprecation warnings.\n  * `c799b8167a13416833ad3b4f3298261a477e826f` (Tim Swe\u00f1a / Swast) & `cdbc2e271529f467b278b2760f12ee0b5d6930d3` (Matthew Armand): Documentation fixes and advanced usage updates regarding `init_poolmanager`.",
+      "grounded_accuracy": 0.8578947368421053,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 0.35714285714285715,
+      "citation_recall": 1.0,
+      "citation_f1": 0.5263157894736842,
+      "rouge_l_f1": 0.07006369426751592,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 3,
+      "question": "How does CaseInsensitiveDict in requests/structures.py enforce lower-case key normalization and preserve original key casing during iteration?",
+      "expected_answer": "CaseInsensitiveDict maps lower-cased keys to (original_key, value) tuples inside a private _store dict, ensuring case-insensitive lookups while preserving original key casing when iterating over keys or items.",
+      "generated_answer": "Based on the codebase history, `CaseInsensitiveDict` in `src/requests/structures.py` implements lower-case key normalization and preserves original key casing through an internal mapping strategy. \n\n### How Key Normalization and Casing Preservation Work\n* **Lower-Case Normalization:** For operations like lookups, insertions, and deletions (`__setitem__`, `__getitem__`, and `__delitem__`), the dictionary uses the lowercased representation of a key (`key.lower()`) as the primary dictionary key for its internal `_store` (an `OrderedDict`). This ensures that querying `cid['Accept']` and `cid['aCCEPT']` targets the exact same entry.\n* **Casing Preservation:** During an assignment (`__setitem__`), the structure stores a tuple containing both the original cased key and the value alongside the lowercased lookup key: \n  $$\\text{self.\\_store}[\\text{key.lower()}] = (\\text{key}, \\text{value})$$\n* **Iteration:** Because the actual cased keys are preserved in the values of `_store`, iteration methods like `__iter__` can yield the original, case-sensitive keys by extracting them:\n  ```python\n  return (casedkey for casedkey, _ in self._store.values())\n  ```\n\n### Historical Context & Evolution\nThis clean architecture was introduced by Colin Dunklau in commit `f7596c75dce4e87ab83bdf74e8f120a4b1a5ff03` (credited to a suggestion by user `@gazpachoking`). Prior to this rewrite, `CaseInsensitiveDict` suffered from bugs regarding case handling and how it interacted with `Session.headers`. The rewrite successfully migrated `CaseInsensitiveDict` to subclass `collections.MutableMapping` while ensuring it correctly remembers the case of the last-set key during iteration, keys extraction, and items views.\n\n### Historical PRs & Linked Issues\n* **Issue #649**: Fixed by commit `f7596c75dce4e87ab83bdf74e8f120a4b1a5ff03` (via making `Session.headers` a `CaseInsensitiveDict` and correcting CID implementation).\n* **Issue #1329**: Fixed alongside #649 in commit `f7596c75dce4e87ab83bdf74e8f120a4b1a5ff03`.\n* **PR #1333**: Authored/discussed leading up to the implementation overhaul by Colin Dunklau (commit `f7596c75dce4e87ab83bdf74e8f120a4b1a5ff03`).\n* **Issue #2668**: Addressed in commit `b8a297baab501f5818a8041ca6dac15b1d29dafd` by Ian Cordasco, which removed a broken `CaseInsensitiveDict` `repr` test.",
+      "grounded_accuracy": 0.8999999999999999,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 0.5,
+      "citation_recall": 1.0,
+      "citation_f1": 0.6666666666666666,
+      "rouge_l_f1": 0.07096774193548387,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "question": "How does Response.raise_for_status() in requests/models.py evaluate HTTP status code ranges to raise HTTPError exceptions?",
+      "expected_answer": "raise_for_status() checks response.status_code. If 400 <= status_code < 500, it raises a ClientError or HTTPError; if 500 <= status_code < 600, it raises a ServerError or HTTPError, formatted with response URL and reason.",
+      "generated_answer": "Based on the codebase evidence, `Response.raise_for_status()` in `src/requests/models.py` evaluates HTTP status codes by checking whether they fall into specific ranges:\n\n1. **Client Errors (`4xx`):** It checks if the status code is between 400 and 499 using the range evaluation `400 <= self.status_code < 500`. If matched, it formats a message designating a client error.\n2. **Server Errors (`5xx`):** It checks if the status code is between 500 and 599 using the range evaluation `500 <= self.status_code < 600`. If matched, it formats a message designating a server error.\n\nIf the status code falls into either range, an error message is constructed\u2014which includes the reason phrase and the request URL (a feature introduced via commit `e3bdec5934a4bdd00405acbb714aec81980f6097` by Marc Abramowitz)\u2014and an `HTTPError` exception is raised. Additionally, status reason phrases provided as bytes undergo robust decoding, attempting UTF-8 first with a fallback to ISO-8859-1 (as referenced via PR #3538).\n\n### Historical PRs & Linked Issues\n* **PR #3538**: Referenced for handling `self.reason` byte-decoding using UTF-8 with an ISO-8859-1 fallback for localized server reason strings.\n* **Commit `e3bdec5934a4bdd00405acbb714aec81980f6097`** (Author: Marc Abramowitz): Added the request URL to the generated `HTTPError` message.\n* **Commit `9ed5db8ed28e816b597dafd328b342ec95466afa`** (Author: Thomas Grainger): Fixed the `raise_for_status` docstring via PR #5293 to clarify that the exception is created fresh on every call rather than stored.",
+      "grounded_accuracy": 1.0,
+      "fact_entailment_rate": 1.0,
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "citation_f1": 1.0,
+      "rouge_l_f1": 0.13599999999999998,
+      "proposition_evaluations": [
+        true,
+        true,
+        true
+      ]
+    }
+  ]
+}

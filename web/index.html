@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codebase History Analyzer — Autonomous Forensic Code Intelligence</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Geist:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+  <!-- Markdown Parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  
+  <link rel="stylesheet" href="index.css">
+</head>
+<body class="bg-base text-primary min-h-screen flex flex-col relative grid-bg overflow-x-hidden">
+
+  <!-- Subtle ambient monochrome vignette -->
+  <div class="ambient-vignette"></div>
+
+  <!-- Top Navigation Header -->
+  <nav class="app-navbar">
+    <div class="nav-left">
+      <div class="brand-container">
+        <div class="brand-logo-wrap">
+          <span class="material-symbols-outlined brand-icon">query_stats</span>
+        </div>
+        <div>
+          <div class="brand-title-row">
+            <span class="brand-title">Codebase History Analyzer</span>
+            <span class="version-badge">v3.0 FORENSIC</span>
+          </div>
+          <p class="brand-tagline">Temporal Knowledge Graph & Causal Root-Cause Intelligence</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Repository Switcher (Restricted to 3 Core Repos) -->
+    <div class="repo-nav-pills" id="repo-selector">
+      <!-- Dynamically populated repo pills -->
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs-group">
+      <button class="nav-tab-btn active" id="tab-btn-studio" onclick="switchTab('studio')">
+        <span class="material-symbols-outlined tab-icon">psychology</span>
+        <span>Forensic Query</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-graph" onclick="switchTab('graph')">
+        <span class="material-symbols-outlined tab-icon">hub</span>
+        <span>Temporal Graph</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-analytics" onclick="switchTab('analytics')">
+        <span class="material-symbols-outlined tab-icon">local_fire_department</span>
+        <span>Hotspots & Churn</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-symbols" onclick="switchTab('symbols')">
+        <span class="material-symbols-outlined tab-icon">data_object</span>
+        <span>AST Code Symbols</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-benchmarks" onclick="switchTab('benchmarks')">
+        <span class="material-symbols-outlined tab-icon">emoji_events</span>
+        <span>Leaderboard</span>
+      </button>
+    </div>
+
+    <!-- Right Controls: Gemini Key Status -->
+    <div class="nav-right">
+      <button class="api-key-pill-btn" id="api-key-pill" onclick="openKeyModal()">
+        <span class="key-status-dot pulse-node" id="key-status-dot"></span>
+        <span id="key-status-text">Gemini API Key</span>
+        <span class="material-symbols-outlined text-xs">key</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    
+    <!-- Repository Stratigraphy Header Banner -->
+    <div class="repo-stratigraphy-banner" id="repo-banner">
+      <div class="repo-banner-info">
+        <div class="repo-tag-row">
+          <span class="repo-chip-lang" id="banner-lang">Python</span>
+          <span class="repo-chip-id" id="banner-id">pallets/flask</span>
+        </div>
+        <h2 class="repo-banner-heading" id="banner-title">Loading Repository Stratigraphy...</h2>
+        <p class="repo-banner-description" id="banner-desc">Initializing SQLite WAL relational store and reciprocal rank fusion indices...</p>
+      </div>
+      <div class="repo-banner-stats">
+        <div class="stat-box">
+          <span class="stat-label">TOTAL COMMITS</span>
+          <span class="stat-value font-mono" id="banner-commits">-</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">AST CHUNKS</span>
+          <span class="stat-value font-mono" id="banner-chunks">-</span>
+        </div>
+        <div class="stat-box highlight">
+          <span class="stat-label">GROUNDED ACCURACY</span>
+          <span class="stat-value font-mono text-highlight" id="banner-acc">93.27%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== TAB 1: FORENSIC QUERY CONSOLE ==================== -->
+    <section id="view-studio" class="tab-view active">
+      
+      <!-- Starter Questions Grid -->
+      <div class="section-container">
+        <div class="section-header-flex">
+          <div class="section-title-wrap">
+            <span class="material-symbols-outlined section-icon">auto_awesome</span>
+            <h3 class="section-title">Curated Forensic Investigations</h3>
+          </div>
+          <span class="section-hint">Click any investigation to load causal proof</span>
+        </div>
+        <div class="starter-cards-grid" id="starter-cards">
+          <!-- Dynamically populated cards -->
+        </div>
+      </div>
+
+      <!-- Query Console Form -->
+      <div class="query-console-container">
+        <div class="query-input-box">
+          <span class="material-symbols-outlined search-icon">search</span>
+          <input 
+            type="text" 
+            id="query-input" 
+            class="query-input-field" 
+            placeholder="Ask a causal question (e.g. 'Why did Flask replace thread-local with ContextVar?' or 'Why was commit 5e5f3ee reverted?')..." 
+            autocomplete="off"
+          />
+          <button id="submit-btn" class="btn-execute" onclick="submitQuery()">
+            <span class="material-symbols-outlined btn-icon">science</span>
+            <span>Investigate</span>
+          </button>
+        </div>
+        <div class="api-key-warning-bar hidden" id="api-key-warning">
+          <span class="material-symbols-outlined text-silver">warning</span>
+          <span>Please connect your <strong>Gemini API Key</strong> to execute live forensic investigations.</span>
+          <button class="btn-text-action" onclick="openKeyModal()">Configure Key →</button>
+        </div>
+      </div>
+
+      <!-- Live Execution State Accordion -->
+      <div id="execution-timeline" class="execution-card hidden">
+        <div class="execution-header">
+          <div class="pulse-indicator"></div>
+          <span class="execution-title" id="timeline-status-text">Autonomous Agent Orchestration in Progress...</span>
+        </div>
+        <div class="timeline-steps-track" id="timeline-steps">
+          <!-- Dynamically populated live stages -->
+        </div>
+      </div>
+
+      <!-- Response Display Card -->
+      <div id="response-container" class="response-card-container hidden">
+        <div class="response-card">
+          <div class="response-header">
+            <div class="badge-group">
+              <span class="badge badge-verified">
+                <span class="material-symbols-outlined text-xs">verified</span>
+                100% Grounded Causal Claims
+              </span>
+              <span class="badge badge-repo" id="resp-repo-badge">psf/requests</span>
+            </div>
+            <div class="response-actions">
+              <button class="btn-subtle" onclick="copyResponseText()">
+                <span class="material-symbols-outlined text-sm">content_copy</span>
+                <span>Copy Answer</span>
+              </button>
+            </div>
+          </div>
+          <div class="markdown-body" id="response-body">
+            <!-- Rendered Markdown Output -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: SPATIALLY PLACED TEMPORAL CAUSAL GRAPH ==================== -->
+    <section id="view-graph" class="tab-view">
+      <div class="graph-workspace-grid">
+        
+        <!-- Main Canvas Area -->
+        <div class="graph-canvas-container glass-panel">
+          
+          <div class="graph-toolbar">
+            <div class="graph-title-pill">
+              <span class="material-symbols-outlined text-sm">account_tree</span>
+              <span class="font-mono text-xs font-semibold">TEMPORAL STRATIFIED CAUSAL GRAPH</span>
+            </div>
+            
+            <div class="graph-filters" id="graph-filters">
+              <button class="filter-pill active" onclick="filterGraph('all')">All Relational Nodes</button>
+              <button class="filter-pill" onclick="filterGraph('revert')">⚡ Reverts</button>
+              <button class="filter-pill" onclick="filterGraph('commit')">🔷 Commits</button>
+              <button class="filter-pill" onclick="filterGraph('pr')">🟣 Pull Requests</button>
+              <button class="filter-pill" onclick="filterGraph('issue')">🟠 Issues</button>
+              <button class="filter-pill" onclick="filterGraph('symbol')">🟢 AST Symbols</button>
+            </div>
+
+            <div class="graph-search-box">
+              <input type="text" id="graph-node-search" class="graph-quick-search" placeholder="Search SHA, PR#, Symbol..." oninput="searchGraphNode(this.value)">
+            </div>
+
+            <div class="graph-actions">
+              <button class="icon-action-btn" title="Zoom In" onclick="zoomGraph(1.25)">
+                <span class="material-symbols-outlined">zoom_in</span>
+              </button>
+              <button class="icon-action-btn" title="Zoom Out" onclick="zoomGraph(0.8)">
+                <span class="material-symbols-outlined">zoom_out</span>
+              </button>
+              <button class="icon-action-btn" title="Reset View" onclick="resetGraphView()">
+                <span class="material-symbols-outlined">center_focus_strong</span>
+              </button>
+              <button class="icon-action-btn btn-fullscreen" id="btn-fullscreen-toggle" title="Toggle Full Screen Mode" onclick="toggleGraphFullscreen()">
+                <span class="material-symbols-outlined" id="fullscreen-icon">fullscreen</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Stratified Spatial Lane Labels -->
+          <div class="strata-lanes-bar">
+            <div class="lane-indicator"><span class="lane-tag tag-issue">LANE 1</span> Issues & Feature Requests</div>
+            <div class="lane-indicator"><span class="lane-tag tag-pr">LANE 2</span> Pull Requests & Reviews</div>
+            <div class="lane-indicator"><span class="lane-tag tag-commit">LANE 3</span> Git Commits & Causal Reverts</div>
+            <div class="lane-indicator"><span class="lane-tag tag-symbol">LANE 4</span> AST Code Symbols Modified</div>
+          </div>
+
+          <!-- SVG Visual Canvas with Spatial Drag/Zoom -->
+          <div class="canvas-viewport" id="graph-viewport">
+            <svg id="causal-graph-svg"></svg>
+            
+            <div class="graph-loading-overlay" id="graph-loading">
+              <div class="spinner"></div>
+              <span class="font-mono text-xs text-secondary">Loading complete relational knowledge graph...</span>
+            </div>
+          </div>
+
+          <div class="graph-legend">
+            <div class="legend-item"><span class="legend-dot dot-issue"></span> Issues (Top Lane)</div>
+            <div class="legend-item"><span class="legend-dot dot-pr"></span> Pull Requests (Upper Lane)</div>
+            <div class="legend-item"><span class="legend-dot dot-commit"></span> Commits (Timeline Lane)</div>
+            <div class="legend-item"><span class="legend-dot dot-revert"></span> Reverts (Causal Arcs)</div>
+            <div class="legend-item"><span class="legend-dot dot-symbol"></span> AST Symbols (Bottom Lane)</div>
+            <div class="legend-item ml-auto"><span class="text-muted">Hint: Drag canvas or scroll to pan/zoom • Click any node to trace causal links</span></div>
+          </div>
+        </div>
+
+        <!-- Forensic Node Inspector Side Panel -->
+        <aside class="graph-inspector-panel glass-panel" id="graph-inspector">
+          <div class="inspector-header">
+            <div class="inspector-title-row">
+              <span class="material-symbols-outlined text-white">manage_search</span>
+              <h4 class="inspector-title">Forensic Node Inspector</h4>
+            </div>
+            <span class="inspector-badge" id="inspector-type-badge">Select Node</span>
+          </div>
+
+          <div class="inspector-body" id="inspector-body">
+            <div class="inspector-empty-state">
+              <span class="material-symbols-outlined text-4xl text-muted mb-2">touch_app</span>
+              <p class="text-sm text-secondary">Click any node in the stratified graph to inspect its complete metadata, diffs, and causal linkages.</p>
+            </div>
+          </div>
+        </aside>
+
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: HOTSPOTS & CHURN ANALYTICS ==================== -->
+    <section id="view-analytics" class="tab-view">
+      <div class="analytics-grid">
+        
+        <!-- Hotspots Card -->
+        <div class="analytics-card glass-panel">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="material-symbols-outlined text-white">local_fire_department</span>
+              <h3 class="card-title">Churn Hotspot Files</h3>
+            </div>
+            <span class="card-hint">Ranked by historical commit modification count</span>
+          </div>
+          <div class="hotspots-list" id="hotspots-container">
+            <div class="loading-spinner">Loading churn metrics...</div>
+          </div>
+        </div>
+
+        <!-- Bus Factor & Contributor Ownership Card -->
+        <div class="analytics-card glass-panel">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="material-symbols-outlined text-white">groups</span>
+              <h3 class="card-title">Contributor Ownership & Bus Factor</h3>
+            </div>
+            <span class="bus-factor-badge" id="bus-factor-badge">Evaluating Risk...</span>
+          </div>
+          <div class="ownership-list" id="ownership-container">
+            <div class="loading-spinner">Loading contributor data...</div>
+          </div>
+        </div>
+
+        <!-- Temporal Coupling Card -->
+        <div class="analytics-card full-width glass-panel">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="material-symbols-outlined text-white">link</span>
+              <h3 class="card-title">Temporal Change Coupling</h3>
+            </div>
+            <span class="card-hint">File pairs that frequently co-commit together across git history</span>
+          </div>
+          <div class="coupling-grid" id="coupling-container">
+            <div class="loading-spinner">Analyzing co-commit dependencies...</div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: AST CODE SYMBOLS ==================== -->
+    <section id="view-symbols" class="tab-view">
+      <div class="symbols-layout-grid">
+        
+        <!-- Symbol Ranking List -->
+        <div class="symbols-list-card glass-panel">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="material-symbols-outlined text-white">data_object</span>
+              <h3 class="card-title">AST Code Symbols</h3>
+            </div>
+            <span class="card-hint">Classes, functions, and methods</span>
+          </div>
+          <div class="symbols-filter-bar">
+            <input type="text" id="symbol-search-input" class="subtle-search-input" placeholder="Search functions or classes..." oninput="filterSymbolsList()">
+          </div>
+          <div class="symbols-items-list" id="symbols-container">
+            <div class="loading-spinner">Scanning AST symbol indexes...</div>
+          </div>
+        </div>
+
+        <!-- Symbol Evolution Timeline Panel -->
+        <div class="symbol-detail-card glass-panel" id="symbol-history-panel">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <span class="material-symbols-outlined text-white">history_edu</span>
+              <h3 class="card-title" id="selected-symbol-title">Symbol Evolution Lineage</h3>
+            </div>
+            <div class="symbol-action-buttons-wrap" id="symbol-actions-wrap" style="display: none;">
+              <button class="btn-subtle text-xs" onclick="jumpToGraphForCurrentSymbol()">
+                <span class="material-symbols-outlined text-xs">hub</span>
+                <span>View on Graph</span>
+              </button>
+              <button class="btn-subtle text-xs" onclick="jumpToQueryForCurrentSymbol()">
+                <span class="material-symbols-outlined text-xs">psychology</span>
+                <span>Investigate</span>
+              </button>
+            </div>
+          </div>
+          <span class="font-mono text-xs text-muted block mb-3" id="selected-symbol-path">Select a symbol from the left</span>
+          <div class="symbol-history-content" id="symbol-history-container">
+            <div class="empty-selection-placeholder">
+              <span class="material-symbols-outlined text-4xl text-muted mb-2">code</span>
+              <p class="text-sm text-secondary">Click any AST symbol from the left to inspect all chronological commits that modified it.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==================== TAB 5: BENCHMARK LEADERBOARD ==================== -->
+    <section id="view-benchmarks" class="tab-view">
+      <div class="leaderboard-wrapper">
+        <div class="leaderboard-header-banner glass-panel">
+          <div class="leaderboard-intro">
+            <div class="badge-group mb-2">
+              <span class="badge badge-gold">EMPIRICAL BENCHMARK</span>
+              <span class="badge badge-repo">Deterministic Evaluation Suite</span>
+            </div>
+            <h2 class="font-headline-lg text-3xl font-bold text-white">Multi-Repository Grounded Truth Matrix</h2>
+            <p class="text-secondary text-sm mt-1 max-w-3xl">
+              Deterministic mathematical evaluation measuring Atomic Proposition Entailment Rate (70%) and True Citation Harmonic F1 Score (30%) across full multi-year repository histories.
+            </p>
+          </div>
+        </div>
+
+        <div class="scorecards-grid">
+          <div class="scorecard glass-panel glow-white">
+            <div class="score-card-header">
+              <span class="score-repo-name">psf/requests</span>
+              <span class="score-tag">PERFECT ENTAILMENT</span>
+            </div>
+            <div class="score-num text-white">93.27%</div>
+            <div class="score-metrics-row">
+              <span>Fact Entailment: <strong>100.00%</strong></span>
+              <span>Citation F1: <strong>77.55%</strong></span>
+            </div>
+          </div>
+
+          <div class="scorecard glass-panel">
+            <div class="score-card-header">
+              <span class="score-repo-name">pallets/flask</span>
+              <span class="score-tag">HIGH PRECISION</span>
+            </div>
+            <div class="score-num text-white">88.99%</div>
+            <div class="score-metrics-row">
+              <span>Fact Entailment: <strong>88.89%</strong></span>
+              <span>Citation F1: <strong>89.22%</strong></span>
+            </div>
+          </div>
+
+          <div class="scorecard glass-panel">
+            <div class="score-card-header">
+              <span class="score-repo-name">BoboTiG/python-mss</span>
+              <span class="score-tag">CAUSAL REVERTS</span>
+            </div>
+            <div class="score-num text-white">86.77%</div>
+            <div class="score-metrics-row">
+              <span>Fact Entailment: <strong>86.67%</strong></span>
+              <span>Citation F1: <strong>87.00%</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-card glass-panel">
+          <div class="table-header-row">
+            <h3 class="card-title">Detailed Evaluation Breakdown</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Target Repository</th>
+                  <th>Evaluated Questions</th>
+                  <th>Total Commits</th>
+                  <th>AST Chunks</th>
+                  <th>Fact Entailment</th>
+                  <th>Citation F1</th>
+                  <th>Grounded Accuracy</th>
+                  <th>Average Latency</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-table-body">
+                <tr>
+                  <td class="font-mono font-semibold text-white">psf/requests</td>
+                  <td>4 Benchmark Suites</td>
+                  <td>6,490</td>
+                  <td>10,809</td>
+                  <td><span class="badge-table-stat text-white">100.00%</span></td>
+                  <td><span class="badge-table-stat">77.55%</span></td>
+                  <td class="font-semibold text-white">93.27%</td>
+                  <td>3.9s / query</td>
+                </tr>
+                <tr>
+                  <td class="font-mono font-semibold text-white">pallets/flask</td>
+                  <td>6 Benchmark Suites</td>
+                  <td>673</td>
+                  <td>10,678</td>
+                  <td><span class="badge-table-stat text-white">88.89%</span></td>
+                  <td><span class="badge-table-stat">89.22%</span></td>
+                  <td class="font-semibold text-white">88.99%</td>
+                  <td>4.2s / query</td>
+                </tr>
+                <tr>
+                  <td class="font-mono font-semibold text-white">BoboTiG/python-mss</td>
+                  <td>5 Benchmark Suites</td>
+                  <td>1,053</td>
+                  <td>1,120</td>
+                  <td><span class="badge-table-stat text-white">86.67%</span></td>
+                  <td><span class="badge-table-stat">87.00%</span></td>
+                  <td class="font-semibold text-white">86.77%</td>
+                  <td>3.7s / query</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== USER GEMINI API KEY MODAL ==================== -->
+  <div class="modal-backdrop hidden" id="api-key-modal" onclick="handleBackdropClick(event)">
+    <div class="modal-dialog glass-panel" onclick="event.stopPropagation()">
+      
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon-box">
+            <span class="material-symbols-outlined text-white">vpn_key</span>
+          </div>
+          <div>
+            <h3 class="modal-title">Connect Your Gemini API Key</h3>
+            <p class="modal-subtitle">Direct, zero-server-storage client key configuration</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" onclick="closeKeyModal()">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-info-box">
+          <span class="material-symbols-outlined text-white text-base">shield</span>
+          <p class="text-xs text-secondary leading-relaxed">
+            Your key is saved locally in your browser's <code>localStorage</code> and transmitted securely in request headers to execute multi-hop causal reasoning across Flask, Requests, and python-mss.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="gemini-key-input">Gemini API Key</label>
+          <div class="key-input-wrapper">
+            <input 
+              type="password" 
+              id="gemini-key-input" 
+              class="form-input font-mono text-sm" 
+              placeholder="AIzaSy..." 
+              autocomplete="off"
+            />
+            <button class="toggle-visibility-btn" type="button" onclick="toggleKeyVisibility()">
+              <span class="material-symbols-outlined" id="key-vis-icon">visibility</span>
+            </button>
+          </div>
+          <span class="form-caption">Need an API key? Get one from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="text-white hover:underline">Google AI Studio</a>.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="model-tier-select">Select Gemini Model</label>
+          <select id="model-tier-select" class="form-select font-mono text-xs">
+            <option value="gemini-3.5-flash-lite" selected>gemini-3.5-flash-lite (Recommended)</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Ultra Fast)</option>
+            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Balanced)</option>
+          </select>
+        </div>
+
+        <div id="key-validation-status" class="validation-status hidden">
+          <!-- Dynamic validation message -->
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-subtle" onclick="clearSavedKey()">Clear Key</button>
+        <div class="flex gap-2">
+          <button class="btn-subtle" onclick="closeKeyModal()">Cancel</button>
+          <button class="btn-primary-action" id="save-key-btn" onclick="saveAndValidateKey()">
+            <span class="material-symbols-outlined text-sm">verified_user</span>
+            <span>Validate & Save</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

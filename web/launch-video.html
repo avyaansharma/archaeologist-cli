@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codebase Archaeologist — Launch Video</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-base: #050507;
+      --bg-dark: #09090B;
+      --bg-surface: #111113;
+      --bg-surface-high: #18181B;
+      --bg-card: rgba(17, 17, 19, 0.92);
+      
+      --text-primary: #FFFFFF;
+      --text-secondary: #D4D4D8;
+      --text-muted: #71717A;
+      --text-faint: #52525B;
+      
+      --border-hairline: rgba(255, 255, 255, 0.12);
+      --border-subtle: rgba(255, 255, 255, 0.22);
+      --border-strong: rgba(255, 255, 255, 0.45);
+      
+      --commit-cyan: #38BDF8;
+      --pr-violet: #C084FC;
+      --issue-amber: #FBBF24;
+      --symbol-emerald: #34D399;
+      --revert-red: #F87171;
+      
+      --font-body: 'Geist', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-display: 'Playfair Display', serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: #000000;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow-x: hidden;
+      padding: 20px;
+    }
+
+    /* Video Player Wrapper (16:9 Landscape 1920x1080) */
+    .video-frame-outer {
+      position: relative;
+      width: 1280px;
+      height: 720px;
+      max-width: 95vw;
+      max-height: 80vh;
+      aspect-ratio: 16 / 9;
+      background: var(--bg-base);
+      border-radius: 12px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.9), 0 0 40px rgba(56, 189, 248, 0.15);
+      overflow: hidden;
+    }
+
+    /* Canvas / Video Container Scaled */
+    #video-canvas-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 20%, #0d1117 0%, #050507 70%);
+      overflow: hidden;
+    }
+
+    /* Ambient Background Grid */
+    .cyber-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+      opacity: 0.8;
+    }
+
+    .ambient-glow {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+      opacity: 0.35;
+      transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .glow-cyan {
+      width: 500px;
+      height: 500px;
+      background: var(--commit-cyan);
+      top: -150px;
+      left: -100px;
+    }
+
+    .glow-violet {
+      width: 450px;
+      height: 450px;
+      background: var(--pr-violet);
+      bottom: -150px;
+      right: -100px;
+    }
+
+    /* Scene Container */
+    .scene {
+      position: absolute;
+      inset: 0;
+      padding: 44px 56px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.97) translateY(10px);
+      transition: opacity 0.35s ease, transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .scene.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1) translateY(0);
+    }
+
+    /* Top Bar HUD */
+    .hud-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      z-index: 10;
+    }
+
+    .brand-hud {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo-icon {
+      font-size: 26px;
+      color: var(--commit-cyan);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px;
+      border-radius: 8px;
+    }
+
+    .brand-hud-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hud-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--border-subtle);
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+
+    .hud-stats-pill {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: rgba(17, 17, 19, 0.85);
+      border: 1px solid var(--border-hairline);
+      padding: 6px 14px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      backdrop-filter: blur(12px);
+    }
+
+    /* Scene 1: The Dilemma */
+    .scene-1-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      margin: auto 0;
+      gap: 24px;
+    }
+
+    .tag-pill {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--commit-cyan);
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px 14px;
+      border-radius: 30px;
+    }
+
+    .hook-heading {
+      font-size: 46px;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      max-width: 900px;
+    }
+
+    .hook-heading .gradient-text {
+      background: linear-gradient(135deg, #FFFFFF 0%, #38BDF8 60%, #C084FC 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .terminal-box {
+      width: 100%;
+      max-width: 780px;
+      background: rgba(10, 10, 12, 0.95);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      text-align: left;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .term-prompt {
+      color: var(--symbol-emerald);
+      font-weight: 700;
+    }
+
+    .term-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 16px;
+      background: var(--commit-cyan);
+      animation: blink 0.8s infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* Scene 2: Multi-Hop Agent Streaming */
+    .scene-2-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin: auto 0;
+      align-items: center;
+    }
+
+    .pipeline-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .pipeline-step {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      opacity: 0.3;
+      transform: translateX(-15px);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .pipeline-step.active-step {
+      opacity: 1;
+      transform: translateX(0);
+      border-color: var(--commit-cyan);
+      background: rgba(56, 189, 248, 0.08);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+    }
+
+    .pipeline-step.done-step {
+      opacity: 0.9;
+      transform: translateX(0);
+      border-color: var(--border-subtle);
+    }
+
+    .step-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .step-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .step-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .step-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .step-done-icon {
+      color: var(--symbol-emerald);
+      font-size: 18px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .done-step .step-done-icon {
+      opacity: 1;
+    }
+
+    /* Live Output Terminal Card */
+    .agent-live-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 380px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+    }
+
+    .card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-hairline);
+      padding-bottom: 10px;
+    }
+
+    .card-heading {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .live-stream-body {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      overflow-y: auto;
+    }
+
+    .stream-chunk {
+      margin-bottom: 8px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Scene 3: Temporal Causal Graph */
+    .scene-3-content {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 28px;
+      margin: auto 0;
+      align-items: center;
+    }
+
+    .graph-visual-box {
+      position: relative;
+      width: 100%;
+      height: 420px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .graph-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .graph-node-circle {
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .graph-node-circle:hover {
+      filter: brightness(1.3);
+      r: 28;
+    }
+
+    .graph-pulse-ring {
+      animation: pulseNode 2s infinite ease-out;
+    }
+
+    @keyframes pulseNode {
+      0% { r: 22; opacity: 0.8; }
+      100% { r: 45; opacity: 0; }
+    }
+
+    .graph-laser-edge {
+      stroke-dasharray: 6 4;
+      animation: dashMove 1.2s linear infinite;
+    }
+
+    @keyframes dashMove {
+      from { stroke-dashoffset: 20; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    .grounded-verdict-box {
+      background: rgba(17, 17, 19, 0.95);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      border-radius: 12px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 8px 30px rgba(52, 211, 153, 0.1);
+    }
+
+    .verdict-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .verdict-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--symbol-emerald);
+      background: rgba(52, 211, 153, 0.15);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .verdict-text {
+      font-size: 14.5px;
+      line-height: 1.55;
+      color: #F4F4F5;
+    }
+
+    .verdict-citations {
+      border-top: 1px solid var(--border-hairline);
+      padding-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .citation-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+    }
+
+    /* Scene 4: Analytics & Leaderboard */
+    .scene-4-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+      margin: auto 0;
+      align-items: stretch;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .metric-card.gold-card {
+      border-color: rgba(251, 191, 36, 0.5);
+      background: radial-gradient(circle at top, rgba(251, 191, 36, 0.08) 0%, rgba(17, 17, 19, 0.95) 70%);
+    }
+
+    .metric-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .metric-big-num {
+      font-size: 42px;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      letter-spacing: -0.03em;
+      margin: 12px 0 6px 0;
+    }
+
+    .gold-text {
+      background: linear-gradient(135deg, #FFFFFF 0%, #FBBF24 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .metric-sub {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .hotspot-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .hotspot-row {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 4px;
+    }
+
+    /* Scene 5: Outro Brand Seal */
+    .scene-5-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      margin: auto 0;
+      gap: 20px;
+    }
+
+    .brand-seal-icon {
+      font-size: 64px;
+      color: var(--commit-cyan);
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, rgba(5, 5, 7, 0) 70%);
+      padding: 20px;
+      border-radius: 50%;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 50px rgba(56, 189, 248, 0.3);
+    }
+
+    .outro-heading {
+      font-size: 48px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .outro-sub {
+      font-size: 18px;
+      color: var(--text-secondary);
+      max-width: 650px;
+      line-height: 1.5;
+    }
+
+    .outro-pills-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .outro-pill {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 30px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .cta-button {
+      margin-top: 10px;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 700;
+      color: #050507;
+      background: #FFFFFF;
+      padding: 12px 30px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
+    }
+
+    /* Bottom Timeline Bar */
+    .timeline-bar-wrap {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      z-index: 100;
+    }
+
+    .timeline-bar-progress {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #38BDF8, #C084FC, #FBBF24);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+      transition: width 0.05s linear;
+    }
+
+    /* Controls Tray outside the video */
+    .controls-tray {
+      margin-top: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 1280px;
+      max-width: 95vw;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .btn-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .ctrl-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: var(--text-primary);
+    }
+
+    .ctrl-btn.primary {
+      background: var(--commit-cyan);
+      color: #050507;
+      border-color: var(--commit-cyan);
+    }
+
+    .ctrl-btn.primary:hover {
+      background: #7dd3fc;
+    }
+
+    .time-readout {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .time-readout span {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+
+    /* Audio visualizer spectrum */
+    .audio-bars-wrap {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 18px;
+    }
+
+    .audio-bar {
+      width: 3px;
+      height: 4px;
+      background: var(--commit-cyan);
+      border-radius: 2px;
+      transition: height 0.1s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 16:9 Landscape Video Frame -->
+  <div class="video-frame-outer" id="video-frame">
+    <div id="video-canvas-container">
+      <div class="cyber-grid"></div>
+      <div class="ambient-glow glow-cyan" id="glow-cyan"></div>
+      <div class="ambient-glow glow-violet" id="glow-violet"></div>
+
+      <!-- Top Bar HUD -->
+      <div class="hud-bar" style="position: absolute; top: 32px; left: 56px; right: 56px;">
+        <div class="brand-hud">
+          <span class="material-symbols-outlined brand-logo-icon">query_stats</span>
+          <span class="brand-hud-title">
+            Codebase Archaeologist
+            <span class="hud-badge">v3.0 FORENSIC</span>
+          </span>
+        </div>
+        <div class="hud-stats-pill">
+          <span>REPO: <strong style="color:var(--commit-cyan)">psf/requests</strong></span>
+          <span>GROUNDED ACCURACY: <strong style="color:var(--symbol-emerald)">93.27%</strong></span>
+          <div class="audio-bars-wrap">
+            <div class="audio-bar" id="ab1"></div>
+            <div class="audio-bar" id="ab2"></div>
+            <div class="audio-bar" id="ab3"></div>
+            <div class="audio-bar" id="ab4"></div>
+            <div class="audio-bar" id="ab5"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCENE 1: The Dilemma (0.0s - 3.2s) -->
+      <div class="scene" id="scene-1">
+        <div style="height: 40px;"></div>
+        <div class="scene-1-content">
+          <div class="tag-pill">Autonomous Forensic Code Intelligence</div>
+          <h1 class="hook-heading">
+            Copilot Explains <em>What</em> Code Does Today.<br>
+            <span class="gradient-text">We Mine Git & PR Graphs to Uncover <em>Why</em>.</span>
+          </h1>
+          <div class="terminal-box">
+            <span class="term-prompt">$ archaeologist ask</span>
+            <span id="typed-prompt-text">"Why was retry logic added to fetchUser?"</span>
+            <span class="term-cursor"></span>
+          </div>
+        </div>
+        <div style="height: 10px;"></div>
+      </div>
+
+      <!-- SCENE 2: Multi-Hop Forensic Agent Streaming (3.2s - 8.5s) -->
+      <div class="scene" id="scene-2">
+        <div style="height: 40px;"></div>
+        <div class="scene-2-grid">
+          
+          <div class="pipeline-container">
+            <div class="pipeline-step" id="pipe-1">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--symbol-emerald)">[1] DECOMPOSE</span>
+                <span class="step-title">AST Target Symbol: <code style="color:var(--symbol-emerald)">fetchUser()</code></span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">check_circle</span>
+            </div>
+
+            <div class="pipeline-step" id="pipe-2">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--commit-cyan)">[2] FORENSICS</span>
+                <span class="step-title">Relational SQLite WAL + RRF Search</span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">check_circle</span>
+            </div>
+
+            <div class="pipeline-step" id="pipe-3">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--commit-cyan)">[3] GIT TRACE</span>
+                <span class="step-title">Commit <code style="color:var(--commit-cyan)">8f31a2</code> ("503 timeouts")</span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">check_circle</span>
+            </div>
+
+            <div class="pipeline-step" id="pipe-4">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--pr-violet)">[4] PR GRAPH</span>
+                <span class="step-title">PR <code style="color:var(--pr-violet)">#421</code> (Review: @tomchristie)</span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">check_circle</span>
+            </div>
+
+            <div class="pipeline-step" id="pipe-5">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--issue-amber)">[5] ISSUE LINK</span>
+                <span class="step-title">Issue <code style="color:var(--issue-amber)">#389</code> ("Peak load gateway 503")</span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">check_circle</span>
+            </div>
+
+            <div class="pipeline-step" id="pipe-6">
+              <div class="step-left">
+                <span class="step-badge" style="color:var(--symbol-emerald)">[6] VERIFIER</span>
+                <span class="step-title">100% Fact Entailment • 4/4 Verified</span>
+              </div>
+              <span class="material-symbols-outlined step-done-icon">verified</span>
+            </div>
+          </div>
+
+          <!-- Live Reasoning Stream Window -->
+          <div class="agent-live-card">
+            <div class="card-header-row">
+              <span class="card-heading">
+                <span class="material-symbols-outlined" style="font-size: 16px; color: var(--commit-cyan);">terminal</span>
+                Forensic Agent Execution Stream
+              </span>
+              <span class="hud-badge" style="color: var(--symbol-emerald)">STREAMING</span>
+            </div>
+            <div class="live-stream-body" id="stream-output">
+              <div class="stream-chunk" style="color: var(--text-muted);">&gt; Initializing LangGraph temporal loop...</div>
+            </div>
+          </div>
+
+        </div>
+        <div style="height: 10px;"></div>
+      </div>
+
+      <!-- SCENE 3: Temporal Causal Graph & Forensic Proof (8.5s - 13.5s) -->
+      <div class="scene" id="scene-3">
+        <div style="height: 40px;"></div>
+        <div class="scene-3-content">
+          
+          <!-- Animated SVG Graph -->
+          <div class="graph-visual-box">
+            <svg class="graph-svg" viewBox="0 0 600 380">
+              <!-- Edge Lines -->
+              <line x1="100" y1="190" x2="260" y2="190" stroke="rgba(56, 189, 248, 0.6)" stroke-width="3" class="graph-laser-edge" />
+              <line x1="260" y1="190" x2="420" y2="110" stroke="rgba(192, 132, 252, 0.6)" stroke-width="3" class="graph-laser-edge" />
+              <line x1="420" y1="110" x2="520" y2="220" stroke="rgba(251, 191, 36, 0.6)" stroke-width="3" class="graph-laser-edge" />
+              <path d="M 260 190 Q 360 330 520 220" fill="none" stroke="rgba(248, 113, 113, 0.8)" stroke-width="2.5" stroke-dasharray="4 4" />
+
+              <!-- Node 1: AST Symbol -->
+              <circle cx="100" cy="190" r="24" fill="#050507" stroke="#34D399" stroke-width="3" class="graph-node-circle" />
+              <circle cx="100" cy="190" r="24" fill="none" stroke="#34D399" stroke-width="2" class="graph-pulse-ring" />
+              <text x="100" y="195" text-anchor="middle" fill="#FFFFFF" font-family="JetBrains Mono" font-size="11" font-weight="700">AST</text>
+              <text x="100" y="235" text-anchor="middle" fill="#34D399" font-family="JetBrains Mono" font-size="11">fetchUser()</text>
+
+              <!-- Node 2: Commit -->
+              <circle cx="260" cy="190" r="24" fill="#050507" stroke="#38BDF8" stroke-width="3" class="graph-node-circle" />
+              <circle cx="260" cy="190" r="24" fill="none" stroke="#38BDF8" stroke-width="2" class="graph-pulse-ring" style="animation-delay: 0.4s;" />
+              <text x="260" y="195" text-anchor="middle" fill="#FFFFFF" font-family="JetBrains Mono" font-size="11" font-weight="700">GIT</text>
+              <text x="260" y="235" text-anchor="middle" fill="#38BDF8" font-family="JetBrains Mono" font-size="11">sha: 8f31a2</text>
+
+              <!-- Node 3: PR -->
+              <circle cx="420" cy="110" r="24" fill="#050507" stroke="#C084FC" stroke-width="3" class="graph-node-circle" />
+              <circle cx="420" cy="110" r="24" fill="none" stroke="#C084FC" stroke-width="2" class="graph-pulse-ring" style="animation-delay: 0.8s;" />
+              <text x="420" y="115" text-anchor="middle" fill="#FFFFFF" font-family="JetBrains Mono" font-size="11" font-weight="700">PR</text>
+              <text x="420" y="80" text-anchor="middle" fill="#C084FC" font-family="JetBrains Mono" font-size="11">PR #421 (@tomchristie)</text>
+
+              <!-- Node 4: Issue -->
+              <circle cx="520" cy="220" r="24" fill="#050507" stroke="#FBBF24" stroke-width="3" class="graph-node-circle" />
+              <circle cx="520" cy="220" r="24" fill="none" stroke="#FBBF24" stroke-width="2" class="graph-pulse-ring" style="animation-delay: 1.2s;" />
+              <text x="520" y="225" text-anchor="middle" fill="#FFFFFF" font-family="JetBrains Mono" font-size="11" font-weight="700">ISSUE</text>
+              <text x="520" y="265" text-anchor="middle" fill="#FBBF24" font-family="JetBrains Mono" font-size="11">Issue #389 (Outage)</text>
+
+              <!-- Revert Tag -->
+              <rect x="330" y="270" width="115" height="22" rx="4" fill="#18181B" stroke="#F87171" stroke-width="1"/>
+              <text x="387" y="285" text-anchor="middle" fill="#F87171" font-family="JetBrains Mono" font-size="10">reverts_sha</text>
+            </svg>
+          </div>
+
+          <!-- Grounded Verdict Card -->
+          <div class="grounded-verdict-box">
+            <div class="verdict-header">
+              <span class="tag-pill" style="padding: 3px 10px; font-size: 10px;">GROUNDED ROOT CAUSE</span>
+              <span class="verdict-badge">100% FACT ENTAILMENT</span>
+            </div>
+            <p class="verdict-text">
+              Retry logic was introduced into <code style="color:var(--symbol-emerald); font-family:var(--font-mono);">fetchUser()</code> in commit <strong>8f31a2</strong> (PR #421) by <strong>@tomchristie</strong> to mitigate intermittent 503 upstream gateway timeouts documented in incident report <strong>Issue #389</strong>.
+            </p>
+            <div class="verdict-citations">
+              <div class="citation-item">
+                <span class="material-symbols-outlined" style="font-size: 15px; color: var(--pr-violet)">merge</span>
+                <span>PR #421: Backoff retry loop for transient failures</span>
+              </div>
+              <div class="citation-item">
+                <span class="material-symbols-outlined" style="font-size: 15px; color: var(--issue-amber)">bug_report</span>
+                <span>Issue #389: Production gateway timeouts under peak load</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <div style="height: 10px;"></div>
+      </div>
+
+      <!-- SCENE 4: Churn Hotspots, Bus Factor & Benchmark Leaderboard (13.5s - 17.5s) -->
+      <div class="scene" id="scene-4">
+        <div style="height: 40px;"></div>
+        <div class="scene-4-content">
+          
+          <div class="metric-card gold-card">
+            <span class="metric-title">
+              <span class="material-symbols-outlined" style="color: var(--issue-amber); font-size: 18px;">emoji_events</span>
+              Grounded Accuracy
+            </span>
+            <div class="metric-big-num gold-text" id="acc-counter">93.27%</div>
+            <p class="metric-sub">Calibrated Multi-Metric Benchmark across 6,490+ historical commits.</p>
+            <div class="hotspot-list">
+              <div class="hotspot-row"><span>Fact Entailment</span><span style="color:var(--symbol-emerald)">100.0%</span></div>
+              <div class="hotspot-row"><span>Citation Recall</span><span style="color:var(--commit-cyan)">95.83%</span></div>
+              <div class="hotspot-row"><span>Citation Precision</span><span style="color:var(--pr-violet)">71.43%</span></div>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-title">
+              <span class="material-symbols-outlined" style="color: var(--revert-red); font-size: 18px;">local_fire_department</span>
+              Temporal Churn Hotspots
+            </span>
+            <div class="metric-big-num" style="color: var(--commit-cyan);">342 <span style="font-size: 16px; color: var(--text-muted);">COMMITS</span></div>
+            <p class="metric-sub">Top modified code surfaces & co-change coupling pairs.</p>
+            <div class="hotspot-list">
+              <div class="hotspot-row"><span>requests/sessions.py</span><span>184 commits</span></div>
+              <div class="hotspot-row"><span>requests/adapters.py</span><span>112 commits</span></div>
+              <div class="hotspot-row"><span>requests/models.py</span><span>96 commits</span></div>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-title">
+              <span class="material-symbols-outlined" style="color: var(--symbol-emerald); font-size: 18px;">hub</span>
+              Bus Factor Risk Engine
+            </span>
+            <div class="metric-big-num" style="color: var(--symbol-emerald);">0.82 <span style="font-size: 16px; color: var(--text-muted);">INDEX</span></div>
+            <p class="metric-sub">Automated ownership distribution & institutional knowledge safety.</p>
+            <div class="hotspot-list">
+              <div class="hotspot-row"><span>@kennethreitz</span><span>42.1% ownership</span></div>
+              <div class="hotspot-row"><span>@sigmavirus24</span><span>28.4% ownership</span></div>
+              <div class="hotspot-row"><span>@nateprewitt</span><span>19.7% ownership</span></div>
+            </div>
+          </div>
+
+        </div>
+        <div style="height: 10px;"></div>
+      </div>
+
+      <!-- SCENE 5: Outro & CTA (17.5s - 20.0s) -->
+      <div class="scene" id="scene-5">
+        <div style="height: 20px;"></div>
+        <div class="scene-5-content">
+          <span class="material-symbols-outlined brand-seal-icon">query_stats</span>
+          <h1 class="outro-heading">
+            Stop Guessing <em>What</em> Changed.<br>
+            <span class="gradient-text">Start Digging <em>Why</em>.</span>
+          </h1>
+          <p class="outro-sub">
+            The Autonomous Forensic Code Intelligence Engine with Temporal Causal Knowledge Graphs.
+          </p>
+          <div class="outro-pills-row">
+            <span class="outro-pill" style="color:var(--symbol-emerald); border-color:rgba(52, 211, 153, 0.4);">LangGraph Multi-Hop RAG</span>
+            <span class="outro-pill" style="color:var(--commit-cyan); border-color:rgba(56, 189, 248, 0.4);">Native MCP Server</span>
+            <span class="outro-pill" style="color:var(--pr-violet); border-color:rgba(192, 132, 252, 0.4);">Gemini 3.5 Flash</span>
+            <span class="outro-pill" style="color:var(--issue-amber); border-color:rgba(251, 191, 36, 0.4);">100% Grounded</span>
+          </div>
+          <div class="cta-button">
+            <span>npx archaeologist-mcp</span>
+            <span class="material-symbols-outlined" style="font-size: 18px;">arrow_forward</span>
+          </div>
+        </div>
+        <div style="height: 10px;"></div>
+      </div>
+
+      <!-- Bottom Timeline Bar -->
+      <div class="timeline-bar-wrap">
+        <div class="timeline-bar-progress" id="timeline-progress"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Element -->
+  <audio id="bg-audio" preload="auto">
+    <source src="assets/music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3" type="audio/mp3">
+  </audio>
+
+  <!-- Controls Tray -->
+  <div class="controls-tray">
+    <div class="btn-group">
+      <button class="ctrl-btn primary" id="btn-play-pause" onclick="togglePlay()">
+        <span class="material-symbols-outlined" id="play-icon" style="font-size: 16px;">play_arrow</span>
+        <span id="play-text">Play Video</span>
+      </button>
+      <button class="ctrl-btn" onclick="restartVideo()">
+        <span class="material-symbols-outlined" style="font-size: 16px;">replay</span>
+        <span>Replay</span>
+      </button>
+      <button class="ctrl-btn" onclick="capturePoster()">
+        <span class="material-symbols-outlined" style="font-size: 16px;">photo_camera</span>
+        <span>Capture Poster (brag.jpg)</span>
+      </button>
+    </div>
+
+    <div class="time-readout">
+      TIME: <span id="current-time-txt">00.0s</span> / <span>20.0s</span> | SCENE: <span id="current-scene-txt">1 / 5</span>
+    </div>
+  </div>
+
+  <!-- Markdown / Video Script Engine -->
+  <script>
+    const DURATION = 20.0;
+    let currentTime = 0.0;
+    let isPlaying = false;
+    let animFrameId = null;
+    let lastTimestamp = null;
+    
+    const audio = document.getElementById('bg-audio');
+    const progressBar = document.getElementById('timeline-progress');
+    const timeTxt = document.getElementById('current-time-txt');
+    const sceneTxt = document.getElementById('current-scene-txt');
+    const playIcon = document.getElementById('play-icon');
+    const playText = document.getElementById('play-text');
+
+    const scenes = [
+      { id: 'scene-1', start: 0.0, end: 3.2, name: 'The Dilemma' },
+      { id: 'scene-2', start: 3.2, end: 8.5, name: 'Multi-Hop Agent' },
+      { id: 'scene-3', start: 8.5, end: 13.5, name: 'Temporal Causal Graph' },
+      { id: 'scene-4', start: 13.5, end: 17.5, name: 'Analytics & Leaderboard' },
+      { id: 'scene-5', start: 17.5, end: 20.0, name: 'Outro & CTA' }
+    ];
+
+    // Pipeline steps for Scene 2
+    const pipelineSteps = [
+      { t: 3.4, id: 'pipe-1', log: '[1] Decompose  -> AST Symbol: `fetchUser`' },
+      { t: 4.2, id: 'pipe-2', log: '[2] Forensics  -> Candidate entities: `UserService.fetchUser()`, Issue #389, PR #421' },
+      { t: 5.0, id: 'pipe-3', log: '[3] Git Trace  -> Found commit 8f31a2 ("Handle transient upstream 503 failures")' },
+      { t: 5.8, id: 'pipe-4', log: '[4] PR Graph   -> Traversed linked PR #421 (Author: @tomchristie)' },
+      { t: 6.6, id: 'pipe-5', log: '[5] Issue Graph -> Traversed linked Issue #389 ("Intermittent gateway timeouts")' },
+      { t: 7.4, id: 'pipe-6', log: '[6] Verifier   -> Verified 4/4 atomic claims against diffs & reviews' }
+    ];
+
+    function updateFrame(t) {
+      progressBar.style.width = ((t / DURATION) * 100) + '%';
+      timeTxt.innerText = t.toFixed(1).padStart(4, '0') + 's';
+
+      // Determine active scene
+      let currentSceneIndex = 0;
+      scenes.forEach((sc, idx) => {
+        const el = document.getElementById(sc.id);
+        if (t >= sc.start && t < sc.end) {
+          el.classList.add('active');
+          currentSceneIndex = idx + 1;
+        } else {
+          el.classList.remove('active');
+        }
+      });
+      sceneTxt.innerText = `${currentSceneIndex} / 5 (${scenes[currentSceneIndex - 1]?.name || 'Outro'})`;
+
+      // Audio Bars visualizer simulation
+      const ab1 = document.getElementById('ab1');
+      const ab2 = document.getElementById('ab2');
+      const ab3 = document.getElementById('ab3');
+      const ab4 = document.getElementById('ab4');
+      const ab5 = document.getElementById('ab5');
+      if (isPlaying) {
+        ab1.style.height = (4 + Math.sin(t * 12) * 8 + 6) + 'px';
+        ab2.style.height = (4 + Math.cos(t * 15) * 10 + 6) + 'px';
+        ab3.style.height = (4 + Math.sin(t * 18) * 12 + 6) + 'px';
+        ab4.style.height = (4 + Math.cos(t * 14) * 9 + 6) + 'px';
+        ab5.style.height = (4 + Math.sin(t * 10) * 7 + 6) + 'px';
+      }
+
+      // Scene 1 Typing Animation
+      const promptEl = document.getElementById('typed-prompt-text');
+      const fullPrompt = '"Why was retry logic added to fetchUser?"';
+      if (t < 3.2) {
+        const charCount = Math.min(fullPrompt.length, Math.floor(t * 22));
+        promptEl.innerText = fullPrompt.substring(0, charCount);
+      }
+
+      // Scene 2 Pipeline Step Progression
+      if (t >= 3.2 && t < 8.5) {
+        const streamBox = document.getElementById('stream-output');
+        pipelineSteps.forEach((step) => {
+          const el = document.getElementById(step.id);
+          if (t >= step.t) {
+            el.classList.add('active-step');
+            if (t >= step.t + 0.6) el.classList.add('done-step');
+          } else {
+            el.classList.remove('active-step', 'done-step');
+          }
+        });
+
+        // Populate logs
+        let logsHtml = `<div class="stream-chunk" style="color:var(--text-muted);">&gt; Initializing LangGraph temporal loop...</div>`;
+        pipelineSteps.forEach((step) => {
+          if (t >= step.t) {
+            logsHtml += `<div class="stream-chunk" style="color:#F4F4F5;">${step.log}</div>`;
+          }
+        });
+        streamBox.innerHTML = logsHtml;
+      }
+
+      // Scene 4 Accuracy Counter Ticker
+      if (t >= 13.5 && t < 17.5) {
+        const accEl = document.getElementById('acc-counter');
+        const progress = Math.min(1, (t - 13.5) / 1.5);
+        const val = (progress * 93.27).toFixed(2);
+        accEl.innerText = val + '%';
+      }
+    }
+
+    function tick(timestamp) {
+      if (!lastTimestamp) lastTimestamp = timestamp;
+      const delta = (timestamp - lastTimestamp) / 1000;
+      lastTimestamp = timestamp;
+
+      if (isPlaying) {
+        currentTime += delta;
+        if (currentTime >= DURATION) {
+          currentTime = DURATION;
+          updateFrame(currentTime);
+          pauseVideo();
+          return;
+        }
+        updateFrame(currentTime);
+      }
+      animFrameId = requestAnimationFrame(tick);
+    }
+
+    function togglePlay() {
+      if (isPlaying) {
+        pauseVideo();
+      } else {
+        playVideo();
+      }
+    }
+
+    function playVideo() {
+      isPlaying = true;
+      lastTimestamp = null;
+      playIcon.innerText = 'pause';
+      playText.innerText = 'Pause';
+      audio.currentTime = currentTime;
+      audio.play().catch(e => console.log('Audio autoplay prevented:', e));
+      if (!animFrameId) animFrameId = requestAnimationFrame(tick);
+    }
+
+    function pauseVideo() {
+      isPlaying = false;
+      playIcon.innerText = 'play_arrow';
+      playText.innerText = 'Play Video';
+      audio.pause();
+    }
+
+    function restartVideo() {
+      currentTime = 0.0;
+      updateFrame(0.0);
+      playVideo();
+    }
+
+    function capturePoster() {
+      // Seek to best settled frame (Scene 3 - 10.5s)
+      currentTime = 10.5;
+      updateFrame(10.5);
+      alert("Settled poster frame captured at 10.5s! Ready for brag.jpg snapshot.");
+    }
+
+    // Initialize at frame 0
+    updateFrame(0.0);
+    animFrameId = requestAnimationFrame(tick);
+
+    // Auto-play after 500ms
+    setTimeout(() => {
+      playVideo();
+    }, 600);
+  </script>
+</body>
+</html>
