@@ -5,13 +5,20 @@ import subprocess
 from typing import List, Dict, Any, Optional
 from archaeologist.utils.security import validate_repo_path, sanitize_sha, sanitize_file_path
 
-# Require explicit function definition keywords (§4 Fix)
+# Multi-language regex patterns supporting Python, JS/TS, Go, Java/C#, and Rust (§4 Fix)
 FUNCTION_REGEX = re.compile(
-    r'^\s*(?:async\s+)?(?:def|function|fn|func|public|private|protected|static)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+    r'^\s*(?:@\w+(?:\([^)]*\))?\s*)*'
+    r'(?:export\s+(?:default\s+)?)?'
+    r'(?:(?:public|private|protected|static|final|native|synchronized|abstract|async|pub)\s+)*'
+    r'(?:def|function|fn)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(|'
+    r'^\s*(?:func)\s+(?:\([^)]*\)\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(|'
+    r'^\s*(?:(?:public|private|protected|static|final|native|synchronized|abstract)\s+)+'
+    r'(?:[a-zA-Z0-9_<>\[\],\s]+\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
     re.MULTILINE
 )
 CLASS_REGEX = re.compile(
-    r'^\s*(?:class|struct|interface|trait|enum)\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+    r'^\s*(?:export\s+(?:default\s+)?)?(?:pub\s+)?(?:public\s+|abstract\s+|final\s+)*'
+    r'(?:class|struct|interface|trait|enum|type)\s+([a-zA-Z_][a-zA-Z0-9_]*)',
     re.MULTILINE
 )
 
@@ -86,7 +93,7 @@ class _SymbolVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, Any]]:
-    """Parses code text using Python AST if .py, or regex fallback for other languages."""
+    """Parses code text using Python AST if .py, or multi-language regex fallback for other languages."""
     if file_path.endswith(".py"):
         try:
             tree = ast.parse(code_text)
@@ -99,7 +106,9 @@ def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, 
     symbols = []
     # Multi-language Regex Fallback
     for match in FUNCTION_REGEX.finditer(code_text):
-        fn_name = match.group(1)
+        fn_name = match.group(1) or match.group(2) or match.group(3)
+        if not fn_name:
+            continue
         line_no = code_text[:match.start()].count("\n") + 1
         symbols.append({
             "symbol_id": f"{file_path}::{fn_name}",
@@ -123,29 +132,43 @@ def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, 
     return symbols
 
 def map_lines_to_symbols(symbols: List[Dict[str, Any]], modified_lines: List[int]) -> List[str]:
-    """Given a list of symbols and modified lines in a diff, returns symbol_ids that overlap."""
+    """Given a list of symbols and modified lines in a diff, returns symbol_ids that overlap.
+    Prioritizes the most specific inner symbol (smallest line range).
+    Enclosing classes are only attributed if modified lines fall outside any enclosed method.
+    """
     if not symbols or not modified_lines:
         return []
 
     lines_set = set(modified_lines)
-    touched_symbols = []
-
+    symbol_spans = []
     sorted_syms = sorted(symbols, key=lambda s: s.get("start_line", s.get("line_number", 0)))
     for i, sym in enumerate(sorted_syms):
-        start_line = sym.get("start_line", sym.get("line_number", 0))
+        s_line = sym.get("start_line", sym.get("line_number", 0))
         if "end_line" in sym and sym["end_line"] is not None:
-            end_line = sym["end_line"]
+            e_line = sym["end_line"]
         else:
-            end_line = (
-                sorted_syms[i + 1].get("start_line", sorted_syms[i + 1].get("line_number", start_line + 50)) - 1 
-                if i + 1 < len(sorted_syms) 
-                else start_line + 50
+            e_line = (
+                sorted_syms[i + 1].get("start_line", sorted_syms[i + 1].get("line_number", s_line + 50)) - 1
+                if i + 1 < len(sorted_syms)
+                else s_line + 50
             )
-        
-        sym_lines = set(range(start_line, end_line + 1))
-        if sym_lines.intersection(lines_set):
-            if sym["symbol_id"] not in touched_symbols:
-                touched_symbols.append(sym["symbol_id"])
+        span_length = max(1, e_line - s_line + 1)
+        symbol_spans.append((sym, s_line, e_line, span_length))
+
+    touched_symbols = []
+    for line in sorted(list(lines_set)):
+        matching = [
+            (sym, span_len)
+            for (sym, s_line, e_line, span_len) in symbol_spans
+            if s_line <= line <= e_line
+        ]
+        if matching:
+            # Most specific symbol has the smallest line span
+            matching.sort(key=lambda item: item[1])
+            best_sym = matching[0][0]
+            sym_id = best_sym["symbol_id"]
+            if sym_id not in touched_symbols:
+                touched_symbols.append(sym_id)
 
     return touched_symbols
 

@@ -44,7 +44,7 @@ def get_archaeologist_dir(repo_path: Optional[str] = None, create: bool = True) 
     return arch_dir
 
 
-from archaeologist.storage.context import current_db_url_var, current_bm25_path_var
+from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
 
 
 def resolve_repo_id(repo_path: str, repo_url: Optional[str] = None) -> str:
@@ -60,12 +60,25 @@ def resolve_repo_id(repo_path: str, repo_url: Optional[str] = None) -> str:
     return Path(repo_path).resolve().name.lower()
 
 
-def save_stored_repo_meta(repo_id: str, repo_path: Optional[str] = None, repo_url: Optional[str] = None) -> None:
+def save_stored_repo_meta(
+    repo_id: str,
+    repo_path: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    embedder_provider: Optional[str] = None,
+    embedder_dimension: Optional[int] = None,
+    last_ingested_at: Optional[str] = None
+) -> None:
     """Stores repository metadata in .archaeologist/meta.json and database repo_meta table."""
     try:
         arch_dir = get_archaeologist_dir(repo_path)
         meta_file = arch_dir / "meta.json"
-        meta_data = {"repo_id": repo_id, "repo_url": repo_url}
+        meta_data = {
+            "repo_id": repo_id,
+            "repo_url": repo_url,
+            "embedder_provider": embedder_provider,
+            "embedder_dimension": embedder_dimension,
+            "last_ingested_at": last_ingested_at
+        }
         meta_file.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -77,11 +90,17 @@ def save_stored_repo_meta(repo_id: str, repo_path: Optional[str] = None, repo_ur
             conn = sqlite3.connect(db_path)
             with conn:
                 conn.execute(
-                    "CREATE TABLE IF NOT EXISTS repo_meta (repo_id TEXT PRIMARY KEY, repo_name TEXT, repo_url TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)"
+                    "CREATE TABLE IF NOT EXISTS repo_meta (repo_id TEXT PRIMARY KEY, repo_name TEXT, repo_url TEXT, embedder_provider TEXT, embedder_dimension INTEGER, last_ingested_at TIMESTAMP, key TEXT, value TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)"
                 )
+                # Ensure columns exist if table was already created
+                for col, ctype in [("embedder_provider", "TEXT"), ("embedder_dimension", "INTEGER"), ("last_ingested_at", "TIMESTAMP"), ("key", "TEXT"), ("value", "TEXT")]:
+                    try:
+                        conn.execute(f"ALTER TABLE repo_meta ADD COLUMN {col} {ctype}")
+                    except Exception:
+                        pass
                 conn.execute(
-                    "INSERT OR REPLACE INTO repo_meta (repo_id, repo_url) VALUES (?, ?)",
-                    (repo_id, repo_url)
+                    "INSERT OR REPLACE INTO repo_meta (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+                    (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at)
                 )
             conn.close()
     except Exception:
@@ -135,14 +154,14 @@ def get_default_db_path(repo_path: Optional[str] = None) -> str:
 
 
 def get_default_db_url(repo_path: Optional[str] = None) -> str:
-    """Returns the default SQLite SQLAlchemy connection URL. ContextVar > repo_path > ARCHAEOLOGIST_DB_URL > SQLite DATABASE_URL."""
-    ctx_url = current_db_url_var.get()
-    if ctx_url:
-        return ctx_url
-
+    """Returns the default SQLite SQLAlchemy connection URL. repo_path > ContextVar > ARCHAEOLOGIST_DB_URL > SQLite DATABASE_URL."""
     if repo_path:
         path_str = str(get_archaeologist_dir(repo_path) / "archaeologist.db").replace("\\", "/")
         return f"sqlite:///{path_str}"
+
+    ctx_url = current_db_url_var.get()
+    if ctx_url:
+        return ctx_url
 
     arch_url = os.getenv("ARCHAEOLOGIST_DB_URL")
     if arch_url:
@@ -157,13 +176,13 @@ def get_default_db_url(repo_path: Optional[str] = None) -> str:
 
 
 def get_default_bm25_path(repo_path: Optional[str] = None) -> str:
-    """Returns default BM25 index path. ContextVar > repo_path > ARCHAEOLOGIST_BM25_PATH > BM25_INDEX_PATH."""
+    """Returns default BM25 index path. repo_path > ContextVar > ARCHAEOLOGIST_BM25_PATH > BM25_INDEX_PATH."""
+    if repo_path:
+        return str(get_archaeologist_dir(repo_path) / "bm25_index.bin")
+
     ctx_bm25 = current_bm25_path_var.get()
     if ctx_bm25:
         return ctx_bm25
-
-    if repo_path:
-        return str(get_archaeologist_dir(repo_path) / "bm25_index.bin")
 
     arch_bm25 = os.getenv("ARCHAEOLOGIST_BM25_PATH")
     if arch_bm25:
@@ -177,11 +196,22 @@ def get_default_bm25_path(repo_path: Optional[str] = None) -> str:
 
 
 def get_default_qdrant_path(repo_path: Optional[str] = None) -> str:
-    """Returns default embedded Qdrant storage path."""
-    if not repo_path:
-        custom = os.getenv("QDRANT_STORAGE_PATH")
-        if custom:
-            return custom
+    """Returns default embedded Qdrant storage path. repo_path > ContextVar > QDRANT_STORAGE_PATH > ARCHAEOLOGIST_REPO > cwd."""
+    if repo_path:
+        return str(get_archaeologist_dir(repo_path) / "qdrant_db")
+
+    ctx_qdrant = current_qdrant_path_var.get()
+    if ctx_qdrant:
+        return ctx_qdrant
+
+    custom = os.getenv("QDRANT_STORAGE_PATH")
+    if custom:
+        return custom
+
+    ctx_repo = current_repo_path_var.get() or os.getenv("ARCHAEOLOGIST_REPO")
+    if ctx_repo:
+        return str(get_archaeologist_dir(ctx_repo) / "qdrant_db")
+
     return str(get_archaeologist_dir(repo_path) / "qdrant_db")
 
 

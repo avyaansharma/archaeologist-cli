@@ -24,6 +24,11 @@ class RepoMeta(SQLModel, table=True):
     repo_id: str = Field(primary_key=True)
     repo_name: Optional[str] = None
     repo_url: Optional[str] = None
+    embedder_provider: Optional[str] = None
+    embedder_dimension: Optional[int] = None
+    last_ingested_at: Optional[datetime] = None
+    key: Optional[str] = None
+    value: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

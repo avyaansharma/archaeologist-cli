@@ -7,7 +7,46 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 
-enc = tiktoken.get_encoding("cl100k_base")
+_ENC = None
+
+def get_tiktoken_encoding():
+    global _ENC
+    if _ENC is None:
+        try:
+            _ENC = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _ENC = None
+    return _ENC
+
+class _FallbackEncoder:
+    def encode(self, text: str) -> list:
+        if not text:
+            return []
+        return [text[i:i+4] for i in range(0, len(text), 4)]
+
+    def decode(self, tokens: list) -> str:
+        return "".join(tokens)
+
+class _EncodingProxy:
+    def encode(self, text: str) -> list:
+        real_enc = get_tiktoken_encoding()
+        if real_enc is not None:
+            try:
+                return real_enc.encode(text)
+            except Exception:
+                pass
+        return _FallbackEncoder().encode(text)
+
+    def decode(self, tokens: list) -> str:
+        real_enc = get_tiktoken_encoding()
+        if real_enc is not None:
+            try:
+                return real_enc.decode(tokens)
+            except Exception:
+                pass
+        return _FallbackEncoder().decode(tokens)
+
+enc = _EncodingProxy()
 
 def token_count(text: str) -> int:
     if not text:
@@ -15,8 +54,8 @@ def token_count(text: str) -> int:
     return len(enc.encode(text))
 
 def make_deterministic_chunk_id(source_type: str, source_id: str, index: int = 0, text_snippet: str = "", repo_id: Optional[str] = None) -> str:
-    """Generates a deterministic UUID5 chunk ID based on source metadata, content snippet, and repository scope."""
-    key = f"{repo_id or ''}:{source_type}:{source_id}:{index}:{text_snippet[:60]}"
+    """Generates a deterministic UUID5 chunk ID based on source metadata, index, and repository scope."""
+    key = f"{repo_id or ''}:{source_type}:{source_id}:{index}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
 def chunk_commit(commit: dict, diff_summary: str | None, repo_id: Optional[str] = None) -> List[dict]:
@@ -192,6 +231,7 @@ def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
     author_name = pr.get("author") or "unknown"
     actual_repo_id = repo_id or pr.get("repo_id")
     
+    related_ids = [f"issue#{num}" for num in pr.get("linked_issue_numbers", [])]
     merge_sha = pr.get("merge_commit_sha") or pr.get("merged_commit_sha")
     if merge_sha:
         m_ref = f"commit#{merge_sha}"

@@ -66,7 +66,15 @@ def blame_explain(
       line_end: Ending line number (1-indexed).
       repo_path: Optional local repository path (defaults to current directory).
     """
-    path = repo_path or os.getenv("ARCHAEOLOGIST_REPO") or os.getenv("GIT_DETECTIVE_REPO", ".")
+    configured_root = os.path.abspath(os.getenv("ARCHAEOLOGIST_REPO") or os.getenv("GIT_DETECTIVE_REPO", "."))
+    if repo_path:
+        candidate = os.path.abspath(repo_path)
+        if candidate != configured_root and not candidate.startswith(configured_root + os.sep):
+            path = configured_root
+        else:
+            path = candidate
+    else:
+        path = configured_root
     results = blame_explain_tool(
         repo_path=path,
         file_path=file_path,

@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from sqlmodel import select
 
 from archaeologist.web.registry import get_repo_config, list_repo_configs, REPOSITORIES
-from archaeologist.storage.paths import get_default_bm25_path
+from archaeologist.storage.paths import get_default_bm25_path, get_default_db_url
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import Commit, PullRequest, Issue, SymbolIndex, Chunk
 from archaeologist.storage.analytics import (
@@ -51,9 +51,9 @@ app.add_middleware(
 )
 
 SUPPORTED_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite"
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-flash-latest"
 ]
 
 from archaeologist.storage.context import (
@@ -67,8 +67,8 @@ def _activate_repo_environment(repo_id: str, client_api_key: Optional[str] = Non
     """Sets request-scoped ContextVars and synchronizes paths for the specified repository."""
     config = get_repo_config(repo_id)
     if not config:
-        current_db = current_db_url_var.get() or os.environ.get("DATABASE_URL")
-        current_bm25 = current_bm25_path_var.get() or os.environ.get("BM25_INDEX_PATH")
+        current_db = current_db_url_var.get() or os.environ.get("DATABASE_URL") or get_default_db_url()
+        current_bm25 = current_bm25_path_var.get() or os.environ.get("BM25_INDEX_PATH") or get_default_bm25_path()
         if current_db:
             raw_path = current_db.split("?")[0].replace("sqlite:///", "")
             config = {

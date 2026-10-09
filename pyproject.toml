@@ -13,10 +13,6 @@ authors = [
     { name = "Avyaan Sharma" }
 ]
 
-[project.urls]
-Homepage = "https://github.com/avyaansharma/archaeologist-cli"
-Repository = "https://github.com/avyaansharma/archaeologist-cli"
-
 dependencies = [
     "anthropic>=0.122.0",
     "fastapi>=0.141.1",
@@ -33,13 +29,17 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.19.0",
     "rank-bm25>=0.2.2",
-    "sqlmodel>=0.0.39",
+    "sqlmodel>=0.0.39,<0.0.45",
     "sse-starlette>=3.4.8",
     "tenacity>=9.1.4",
     "tiktoken>=0.13.0",
     "typer>=0.27.1",
     "uvicorn>=0.52.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/avyaansharma/archaeologist-cli"
+Repository = "https://github.com/avyaansharma/archaeologist-cli"
 
 [project.scripts]
 archaeologist = "archaeologist.cli:app"

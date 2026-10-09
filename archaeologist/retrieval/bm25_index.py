@@ -7,10 +7,23 @@ from rank_bm25 import BM25Okapi
 _BM25_CACHE = {}
 
 def tokenize_text(text: Optional[str]) -> List[str]:
-    """Tokenizes text into alphanumeric and underscore words for robust BM25 matching."""
+    """Tokenizes text into code-aware and Unicode-aware tokens for robust BM25 matching."""
     if not text or not isinstance(text, str):
         return []
-    return re.findall(r'[a-zA-Z0-9_]+', text.lower())
+    words = re.findall(r'\w+', text)
+    tokens = []
+    for w in words:
+        w_lower = w.lower()
+        tokens.append(w_lower)
+        # Split snake_case identifiers
+        if "_" in w:
+            parts = [p.lower() for p in w.split("_") if p]
+            tokens.extend(parts)
+        # Split camelCase and PascalCase identifiers
+        camel_parts = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)|\d+', w)
+        if len(camel_parts) > 1:
+            tokens.extend([p.lower() for p in camel_parts if p])
+    return tokens
 
 class _SafeBM25Unpickler(pickle.Unpickler):
     SAFE_MODULES = {

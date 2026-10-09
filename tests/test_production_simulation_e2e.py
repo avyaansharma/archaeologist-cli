@@ -20,8 +20,14 @@ def isolated_db():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db_url = f"sqlite:///{path.replace(os.sep, '/')}"
+    old_env = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = db_url
     init_db(db_url)
     yield db_url
+    if old_env is not None:
+        os.environ["DATABASE_URL"] = old_env
+    else:
+        os.environ.pop("DATABASE_URL", None)
     try:
         os.remove(path)
     except Exception:

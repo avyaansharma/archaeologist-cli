@@ -1,6 +1,6 @@
 import sys
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import find_candidate_forensics
 
@@ -44,7 +44,7 @@ def plan_node(state: AgentState) -> dict:
     unverified = state.get("unverified_claims", [])
     repo_id = state.get("repo_id")
 
-    print(f"Agent: Planning retrieval using Gemini 3.5 Flash for sub-question: '{current_sub_q}' (retry={retry_count})...", file=sys.stderr)
+    print(f"Agent: Planning retrieval using Gemini ({DEFAULT_MODEL}) for sub-question: '{current_sub_q}' (retry={retry_count})...", file=sys.stderr)
 
     # 1. Look up candidate code symbols, PRs, and commit SHAs
     symbol_context = ""
@@ -81,7 +81,7 @@ def plan_node(state: AgentState) -> dict:
 
         result = client.generate_json(
             prompt=prompt,
-            model="gemini-3.5-flash",
+            model=DEFAULT_MODEL,
             temperature=temp,
             max_output_tokens=2000
         )

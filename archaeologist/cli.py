@@ -17,15 +17,38 @@ from archaeologist.storage.paths import (
 from archaeologist.utils.config import sync_env_from_config, load_user_config, save_user_config
 
 def _configure_repo_env(repo_path: Optional[str] = None, db_path: Optional[str] = None) -> Optional[str]:
-    """Sets database and BM25 environment variables based on repo_path or db_path, and returns repo_id."""
+    """Sets database, Qdrant, repo, and BM25 environment variables based on repo_path or db_path, and returns repo_id."""
+    from archaeologist.storage.paths import get_default_qdrant_path
+    from archaeologist.storage.context import (
+        current_db_url_var,
+        current_bm25_path_var,
+        current_qdrant_path_var,
+        current_repo_path_var
+    )
     repo_id = None
     if repo_path:
-        os.environ["DATABASE_URL"] = get_default_db_url(repo_path)
-        os.environ["BM25_INDEX_PATH"] = get_default_bm25_path(repo_path)
-        repo_id = get_stored_repo_id(repo_path) or resolve_repo_id(repo_path)
+        abs_repo = os.path.abspath(repo_path)
+        os.environ["ARCHAEOLOGIST_REPO"] = abs_repo
+        os.environ["DATABASE_URL"] = get_default_db_url(abs_repo)
+        os.environ["BM25_INDEX_PATH"] = get_default_bm25_path(abs_repo)
+        os.environ["QDRANT_STORAGE_PATH"] = get_default_qdrant_path(abs_repo)
+        current_db_url_var.set(os.environ["DATABASE_URL"])
+        current_bm25_path_var.set(os.environ["BM25_INDEX_PATH"])
+        current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
+        current_repo_path_var.set(abs_repo)
+        repo_id = get_stored_repo_id(abs_repo) or resolve_repo_id(abs_repo)
     elif db_path:
-        os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
-        repo_id = get_stored_repo_id()
+        abs_db = os.path.abspath(db_path)
+        repo_dir = os.path.dirname(abs_db)
+        os.environ["ARCHAEOLOGIST_REPO"] = repo_dir
+        os.environ["DATABASE_URL"] = f"sqlite:///{abs_db}"
+        os.environ["BM25_INDEX_PATH"] = get_default_bm25_path(repo_dir)
+        os.environ["QDRANT_STORAGE_PATH"] = get_default_qdrant_path(repo_dir)
+        current_db_url_var.set(os.environ["DATABASE_URL"])
+        current_bm25_path_var.set(os.environ["BM25_INDEX_PATH"])
+        current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
+        current_repo_path_var.set(repo_dir)
+        repo_id = get_stored_repo_id(repo_dir)
     return repo_id
 
 import sys
@@ -287,11 +310,41 @@ def status(
         chunk_count = session.exec(select(func.count(Chunk.id))).one() or 0
         embedded_count = session.exec(select(func.count(Chunk.id)).where(Chunk.embedded == True)).one() or 0
         symbol_count = session.exec(select(func.count(SymbolIndex.symbol_id))).one() or 0
+        meta_dict = {}
         try:
-            meta_rows = session.exec(select(RepoMeta)).all()
-            meta_dict = {m.key: m.value for m in meta_rows}
+            meta_stmt = select(RepoMeta)
+            if repo_id:
+                meta_stmt = meta_stmt.where(RepoMeta.repo_id == repo_id)
+            meta_row = session.exec(meta_stmt).first() or session.exec(select(RepoMeta)).first()
+            if meta_row:
+                if meta_row.repo_id:
+                    meta_dict["repo_id"] = meta_row.repo_id
+                if meta_row.embedder_provider:
+                    meta_dict["embedder_provider"] = meta_row.embedder_provider
+                if meta_row.embedder_dimension:
+                    meta_dict["embedder_dimension"] = str(meta_row.embedder_dimension)
+                if meta_row.last_ingested_at:
+                    meta_dict["last_ingested_at"] = str(meta_row.last_ingested_at)
+                elif meta_row.created_at:
+                    meta_dict["last_ingested_at"] = str(meta_row.created_at)
+            for m in session.exec(select(RepoMeta)).all():
+                if m.key and m.value:
+                    meta_dict[m.key] = m.value
         except Exception:
-            meta_dict = {}
+            pass
+
+        if "embedder_provider" not in meta_dict or meta_dict["embedder_provider"] == "none":
+            from archaeologist.storage.paths import get_repo_data_dir
+            meta_json_path = os.path.join(get_repo_data_dir(resolved_root), "meta.json")
+            if os.path.exists(meta_json_path):
+                try:
+                    with open(meta_json_path, "r", encoding="utf-8") as f:
+                        file_meta = json.load(f)
+                    for k, v in file_meta.items():
+                        if k not in meta_dict and v is not None:
+                            meta_dict[k] = str(v)
+                except Exception:
+                    pass
 
     data = {
         "status": "ready",

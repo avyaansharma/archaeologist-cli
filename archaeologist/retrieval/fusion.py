@@ -65,25 +65,41 @@ def reciprocal_rank_fusion(
             if is_historical_intent:
                 decay_lambda = 0.01
             else:
-                # Balanced time-decay factor for architectural queries (gentle penalty for ancient commits)
                 decay_lambda = 0.03
 
-            decay_factor = math.exp(-decay_lambda * years_old)
+            # Ensure decay factor has a minimum floor (0.35) so older commits are never zeroed out
+            decay_factor = max(0.35, math.exp(-decay_lambda * years_old))
 
         elif source_type in ("source_code", "file", "ast_symbol", "code"):
-            decay_factor = 1.50
+            # Current code never decays with age
+            decay_factor = 1.25
+
+        elif source_type in ("pull_request", "pr", "issue"):
+            # PRs and issues carry high context and parity with commits
+            decay_factor = 1.0
 
         # Option 2: AST Symbol Exact Match Rank Boosting
         symbol_boost = 1.0
         symbols_modified = payload.get("symbols_modified") or []
         text_content = payload.get("text", "")
         if query_symbols:
-            if isinstance(symbols_modified, list) and symbols_modified:
-                lowered_syms = [str(s).lower() for s in symbols_modified]
-                if any(qs in s for qs in query_symbols for s in lowered_syms):
-                    symbol_boost = 2.0
+            bare_symbols = set()
+            if isinstance(symbols_modified, list):
+                for s in symbols_modified:
+                    clean = str(s).strip().lower()
+                    bare_symbols.add(clean)
+                    if "::" in clean:
+                        for p in clean.split("::"):
+                            bare_symbols.add(p)
+                    if "." in clean:
+                        for p in clean.split("."):
+                            bare_symbols.add(p)
+
+            # Exact match on qualified or bare symbol name (prevents loose substring collisions)
+            if any(qs in bare_symbols for qs in query_symbols):
+                symbol_boost = 1.75
             elif any(qs in text_content.lower() for qs in query_symbols):
-                symbol_boost = 1.25
+                symbol_boost = 1.15
 
         rrf_scores[chunk_id] += score_contrib * decay_factor * symbol_boost
 

@@ -7,13 +7,29 @@ from archaeologist.utils.security import validate_repo_path, sanitize_sha
 COMMIT_DELIM = "\x1e"   # record separator
 FIELD_DELIM = "\x1f"    # unit separator
 
+def _get_monorepo_subpath(validated_path: str) -> Optional[str]:
+    """Returns the relative subdirectory path if validated_path is inside a git monorepo root."""
+    try:
+        res = subprocess.run(["git", "-C", validated_path, "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            top_level = os.path.abspath(res.stdout.strip())
+            val_abs = os.path.abspath(validated_path)
+            if top_level != val_abs and val_abs.startswith(top_level):
+                return os.path.relpath(val_abs, top_level).replace("\\", "/")
+    except Exception:
+        pass
+    return None
+
 def count_commits(repo_path: str, since: Optional[str] = None) -> int:
     """Quickly returns total commit count using git rev-list for accurate progress calculation."""
     try:
         validated_path = validate_repo_path(repo_path)
-        cmd = ["git", "-C", validated_path, "rev-list", "--count", "HEAD"]
+        cmd = ["git", "-c", "core.quotepath=false", "-C", validated_path, "rev-list", "--count", "HEAD"]
         if since:
             cmd += [f"--since={since}"]
+        subpath = _get_monorepo_subpath(validated_path)
+        if subpath:
+            cmd += ["--", subpath]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
         if res.returncode == 0 and res.stdout.strip().isdigit():
             return int(res.stdout.strip())
@@ -27,9 +43,12 @@ def iter_commits(repo_path: str, since: Optional[str] = None) -> Iterator[dict]:
     
     # Prefix format with COMMIT_DELIM and end with FIELD_DELIM + "NUMSTAT"
     fmt = COMMIT_DELIM + FIELD_DELIM.join(["%H", "%an", "%ae", "%aI", "%s%n%b"]) + FIELD_DELIM + "NUMSTAT"
-    cmd = ["git", "-C", validated_path, "log", f"--pretty=format:{fmt}", "--numstat"]
+    cmd = ["git", "-c", "core.quotepath=false", "-C", validated_path, "log", f"--pretty=format:{fmt}", "--numstat"]
     if since:
         cmd += [f"--since={since}"]
+    subpath = _get_monorepo_subpath(validated_path)
+    if subpath:
+        cmd += ["--", subpath]
     
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     buffer = ""
@@ -105,20 +124,37 @@ def _parse_commit_record(record: str) -> dict:
         "deletions": deletions,
     }
 
-def get_commit_diff(repo_path: str, sha: str, max_bytes: int = 20_000) -> str:
-    """Returns the diff text unified format for a commit, limited to max_bytes."""
-    validated_path = validate_repo_path(repo_path)
-    clean_sha = sanitize_sha(sha)
-    cmd = ["git", "-C", validated_path, "show", clean_sha, "--format=", "--unified=3"]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    diff = result.stdout
-    return diff[:max_bytes]
-
 def is_merge_commit(repo_path: str, sha: str) -> bool:
     """Checks if a commit is a merge commit (has 2 or more parent commits)."""
     validated_path = validate_repo_path(repo_path)
     clean_sha = sanitize_sha(sha)
-    cmd = ["git", "-C", validated_path, "rev-list", "--parents", "-n", "1", clean_sha]
+    cmd = ["git", "-c", "core.quotepath=false", "-C", validated_path, "rev-list", "--parents", "-n", "1", clean_sha]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     parents = result.stdout.strip().split()
     return len(parents) > 2
+
+def get_commit_diff(repo_path: str, sha: str, max_bytes: int = 20_000) -> str:
+    """Returns the diff text unified format for a commit, limited to max_bytes without buffering full diff."""
+    validated_path = validate_repo_path(repo_path)
+    clean_sha = sanitize_sha(sha)
+    
+    cmd = ["git", "-c", "core.quotepath=false", "-C", validated_path, "show"]
+    if is_merge_commit(validated_path, clean_sha):
+        cmd.extend(["-m", "--first-parent"])
+    cmd.extend([clean_sha, "--format=", "--unified=3"])
+    
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    diff_lines = []
+    total_bytes = 0
+    try:
+        if proc.stdout:
+            for line in proc.stdout:
+                diff_lines.append(line)
+                total_bytes += len(line.encode("utf-8", errors="replace"))
+                if total_bytes >= max_bytes:
+                    break
+    finally:
+        proc.terminate()
+        proc.wait()
+        
+    return "".join(diff_lines)[:max_bytes]

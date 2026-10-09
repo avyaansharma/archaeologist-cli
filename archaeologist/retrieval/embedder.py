@@ -24,19 +24,22 @@ class Embedder:
         self.openai_key = openai_key
 
         # Determine dimensions & model
-        if os.getenv("USE_FASTEMBED") == "1":
-            self.model = "fastembed"
-            self.dimension = 384
-            print("Embedder initialized with FastEmbed local model (BAAI/bge-small-en-v1.5).", file=sys.stderr)
-        elif self.gemini_keys:
+        # Default to local fastembed for ultra-fast, zero-quota, offline embedding.
+        # Cloud providers can be explicitly selected via EMBEDDER_PROVIDER or USE_GEMINI_EMBEDDINGS.
+        embed_provider_env = os.getenv("EMBEDDER_PROVIDER", "").lower()
+        use_gemini = os.getenv("USE_GEMINI_EMBEDDINGS") == "1" or embed_provider_env == "gemini"
+        use_voyage = embed_provider_env == "voyage" or bool(voyage_key)
+        use_openai = embed_provider_env == "openai" or bool(openai_key)
+
+        if use_gemini and self.gemini_keys:
             self.model = "models/gemini-embedding-001"
             self.dimension = 3072
             print("Embedder initialized with Google Gemini API (models/gemini-embedding-001).", file=sys.stderr)
-        elif self.voyage_key:
+        elif use_voyage and self.voyage_key:
             self.model = "voyage-code-2"
             self.dimension = 1024
             print("Embedder initialized with Voyage API (voyage-code-2).", file=sys.stderr)
-        elif self.openai_key:
+        elif use_openai and self.openai_key:
             self.model = "text-embedding-3-small"
             self.dimension = 1536
             print("Embedder initialized with OpenAI API (text-embedding-3-small).", file=sys.stderr)
@@ -44,6 +47,17 @@ class Embedder:
             self.model = "fastembed"
             self.dimension = 384
             print("Embedder initialized with FastEmbed local model (BAAI/bge-small-en-v1.5).", file=sys.stderr)
+
+        if self.model == "fastembed":
+            self.provider = "fastembed"
+        elif "gemini" in self.model:
+            self.provider = "gemini"
+        elif "voyage" in self.model:
+            self.provider = "voyage"
+        elif "text-embedding" in self.model:
+            self.provider = "openai"
+        else:
+            self.provider = self.model
 
     def embed_texts(self, texts: List[str], return_success_flags: bool = False):
         """Embeds a list of texts and returns a list of embeddings (list of floats).
@@ -128,7 +142,7 @@ class Embedder:
                     except Exception as be:
                         err_str = str(be).upper()
                         if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "QUOTA" in err_str:
-                            if attempt < 3:
+                            if attempt < 2:
                                 time.sleep(1.5 ** (attempt + 1))
                                 continue
                             else:
@@ -139,6 +153,9 @@ class Embedder:
                             print(f"Notice: Gemini key {key_idx} error: {be}. Rotating key...", file=sys.stderr)
                             exhausted_keys.add(key_idx)
                             break
+
+                if not key_success:
+                    exhausted_keys.add(key_idx)
 
                 if batch_success:
                     break

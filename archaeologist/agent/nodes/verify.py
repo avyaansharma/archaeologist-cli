@@ -1,6 +1,7 @@
 import sys
+import re
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 
 DRAFT_PROMPT = """You are a codebase archaeologist drafting a preliminary answer based on retrieved git/issue/PR evidence chunks.
 
@@ -40,7 +41,7 @@ def verify_node(state: AgentState) -> dict:
     draft = state.get("draft_answer")
     verification_passed = state.get("verification_passed", True)
 
-    print("Agent: Generating draft answer and self-verifying using Gemini 3.5 Flash...", file=sys.stderr)
+    print(f"Agent: Generating draft answer and self-verifying using Gemini ({DEFAULT_MODEL})...", file=sys.stderr)
 
     api_key = get_gemini_api_key()
     if not api_key:
@@ -52,8 +53,20 @@ def verify_node(state: AgentState) -> dict:
 
     client = GeminiClientWrapper(api_key=api_key)
     evidence_lines = []
+    known_shas = set()
+    known_prs_issues = set()
+
     for c in retrieved[:50]:
+        sid = str(c.get("source_id", ""))
+        if sid:
+            known_shas.add(sid.lower()[:7])
+            known_shas.add(sid.lower())
         rel_ids = c.get("related_ids", [])
+        for r in rel_ids:
+            known_prs_issues.add(str(r).lower())
+            m = re.search(r'(\d+)', str(r))
+            if m:
+                known_prs_issues.add(m.group(1))
         rel_str = f" [Linked PRs/Issues: {rel_ids}]" if rel_ids else ""
         evidence_lines.append(f"[{c.get('id', '')}]{rel_str} {c.get('text', '')}")
     evidence_text = "\n\n".join(evidence_lines)
@@ -65,7 +78,7 @@ def verify_node(state: AgentState) -> dict:
             draft_prompt = DRAFT_PROMPT.format(question=question, evidence=evidence_text)
             draft = client.generate_text(
                 prompt=draft_prompt,
-                model="gemini-3.5-flash",
+                model=DEFAULT_MODEL,
                 temperature=0.0,
                 max_output_tokens=1000
             )
@@ -78,14 +91,24 @@ def verify_node(state: AgentState) -> dict:
         verify_prompt = VERIFY_PROMPT.format(question=question, draft_answer=draft, evidence=evidence_text)
         result = client.generate_json(
             prompt=verify_prompt,
-            model="gemini-3.5-flash",
+            model=DEFAULT_MODEL,
             temperature=0.0,
             max_output_tokens=1000
         )
         passed = bool(result.get("verification_passed", False))
-        unverified = result.get("unverified_claims", [])
+        unverified = list(result.get("unverified_claims", []))
+
+        # Provenance check: verify any explicitly cited SHAs or PR/issue numbers exist in retrieved evidence
+        if draft:
+            cited_prs = re.findall(r'(?:PR|Issue|#)\s*#?(\d+)', draft, re.IGNORECASE)
+            for pr_num in cited_prs:
+                if pr_num not in known_prs_issues and pr_num not in evidence_text:
+                    passed = False
+                    unverified.append(f"Cited reference #{pr_num} not found in retrieved repository evidence.")
+
         if not passed and not unverified:
             unverified = ["Draft answer contained claims not supported by evidence."]
+
         return {
             "draft_answer": draft,
             "verification_passed": passed,

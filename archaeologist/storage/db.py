@@ -30,31 +30,113 @@ def _create_engine_for_url(url: str) -> Engine:
         connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
         pool_pre_ping=True
     )
-    if url.startswith("sqlite") and ":memory:" not in url:
+    if url.startswith("sqlite"):
         from sqlalchemy import event
         @event.listens_for(eng, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             try:
                 cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA journal_mode=WAL;")
-                cursor.execute("PRAGMA synchronous=NORMAL;")
+                if ":memory:" not in url:
+                    cursor.execute("PRAGMA journal_mode=WAL;")
+                    cursor.execute("PRAGMA synchronous=NORMAL;")
+                cursor.execute("PRAGMA busy_timeout=10000;")
                 cursor.close()
             except Exception:
                 pass
 
     SQLModel.metadata.create_all(eng)
     if url.startswith("sqlite") and ":memory:" not in url:
-        try:
-            with eng.connect() as conn:
-                for table in ["commit", "pullrequest", "issue", "chunk", "symbolindex", "repo_meta"]:
-                    try:
-                        conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN repo_id VARCHAR;')
-                    except Exception:
-                        pass
-                conn.commit()
-        except Exception as e:
-            print(f"Notice: Could not migrate columns: {e}", file=sys.stderr)
+        _run_schema_migrations(eng)
     return eng
+
+def get_engine(url: Optional[str] = None) -> Engine:
+    """Retrieves or creates a cached Engine for the specified database URL."""
+    target_url = url or current_db_url_var.get() or os.getenv("DATABASE_URL") or get_default_db_url()
+    with _DB_LOCK:
+        if target_url not in _ENGINES:
+            _ENGINES[target_url] = _create_engine_for_url(target_url)
+        return _ENGINES[target_url]
+
+def _run_schema_migrations(eng: Engine):
+    """Dynamically applies schema migrations to add any missing columns from models to SQLite tables."""
+    try:
+        with eng.connect() as conn:
+            # Schema version tracking table
+            conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS _schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMP);")
+            
+            # Map of expected table columns and their SQL types
+            expected_columns = {
+                "commit": {
+                    "repo_id": "VARCHAR",
+                    "diff_summary": "TEXT",
+                    "raw_diff_truncated": "TEXT",
+                    "is_revert": "BOOLEAN",
+                    "reverts_sha": "VARCHAR",
+                    "superseded_by_sha": "VARCHAR",
+                },
+                "pullrequest": {
+                    "repo_id": "VARCHAR",
+                    "merge_commit_sha": "VARCHAR",
+                    "linked_issue_numbers": "TEXT",
+                    "linked_commit_shas": "TEXT",
+                    "review_comments": "TEXT",
+                    "comments": "TEXT",
+                },
+                "issue": {
+                    "repo_id": "VARCHAR",
+                    "linked_pr_numbers": "TEXT",
+                    "linked_commit_shas": "TEXT",
+                    "comments": "TEXT",
+                    "labels": "TEXT",
+                    "close_reason": "VARCHAR",
+                },
+                "chunk": {
+                    "repo_id": "VARCHAR",
+                    "is_reverted": "BOOLEAN",
+                    "token_count": "INTEGER",
+                    "embedded": "BOOLEAN",
+                    "symbols_modified": "TEXT",
+                    "related_ids": "TEXT",
+                    "file_paths": "TEXT",
+                },
+                "symbolindex": {
+                    "repo_id": "VARCHAR",
+                    "commit_count": "INTEGER",
+                    "kind": "VARCHAR",
+                },
+                "repo_meta": {
+                    "repo_id": "VARCHAR",
+                    "repo_name": "TEXT",
+                    "repo_url": "TEXT",
+                    "embedder_provider": "TEXT",
+                    "embedder_dimension": "INTEGER",
+                    "last_ingested_at": "TIMESTAMP",
+                    "key": "TEXT",
+                    "value": "TEXT",
+                    "created_at": "TIMESTAMP",
+                    "updated_at": "TIMESTAMP",
+                }
+            }
+            
+            for table_name, columns in expected_columns.items():
+                try:
+                    res = conn.exec_driver_sql(f'PRAGMA table_info("{table_name}");').fetchall()
+                    existing_cols = {row[1] for row in res}
+                    if not existing_cols:
+                        continue
+                    for col_name, col_type in columns.items():
+                        if col_name not in existing_cols:
+                            try:
+                                conn.exec_driver_sql(f'ALTER TABLE "{table_name}" ADD COLUMN {col_name} {col_type};')
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            conn.commit()
+    except Exception as e:
+        print(f"Notice: Schema migration check completed with warning: {e}", file=sys.stderr)
+
 
 def get_engine_for_url(url: str) -> Engine:
     """Returns or creates a cached Engine for the specified database URL in a thread-safe manner."""

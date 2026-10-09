@@ -236,10 +236,15 @@ def blame_explain_tool(
     end = max(start, int(line_end))
 
     cmd = [
-        "git", "-C", validated_repo, "blame", 
-        "-L", f"{start},{end}", 
-        "--porcelain", "--", clean_file_path
+        "git", "-C", validated_repo, "blame",
+        "-w", "-M", "-C",
+        "-L", f"{start},{end}",
+        "--porcelain"
     ]
+    ignore_revs = os.path.join(validated_repo, ".git-blame-ignore-revs")
+    if os.path.isfile(ignore_revs):
+        cmd.extend(["--ignore-revs-file", ignore_revs])
+    cmd.extend(["--", clean_file_path])
     
     shas = set()
     try:

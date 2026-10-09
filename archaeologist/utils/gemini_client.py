@@ -12,13 +12,17 @@ from google.genai import types
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 warnings.filterwarnings("ignore", message=".*automatic function calling.*")
 
-DEFAULT_MODEL = "gemini-flash-latest"
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
 FALLBACK_MODELS = [
-    "gemini-flash-latest",
     "gemini-2.5-flash-lite",
     "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
     "gemini-3.5-flash",
+    "gemini-3.8-flash",
 ]
 
 def get_gemini_api_keys() -> List[str]:
@@ -96,12 +100,18 @@ class GeminiClientWrapper:
                     if key_exhausted_or_invalid:
                         break
                     try:
-                        response = client.models.generate_content(
-                            model=m_name,
-                            contents=prompt,
-                            config=config
-                        )
-                        return response.text.strip() if response.text else ""
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                client.models.generate_content,
+                                model=m_name,
+                                contents=prompt,
+                                config=config
+                            )
+                            response = future.result(timeout=30.0)
+                        return response.text.strip() if (response and response.text) else ""
+                    except FutureTimeoutError:
+                        print(f"Notice: Gemini call timed out after 30s on {m_name}. Trying next fallback model...", file=sys.stderr)
+                        continue
                     except Exception as e:
                         last_exception = e
                         err_str = str(e)

@@ -49,6 +49,7 @@ class VectorStore:
         self.writable = writable
         self.degraded = False
         self.dimension_mismatch = False
+        self.recreated_due_to_dim_change = False
 
         if vector_size is None:
             from archaeologist.retrieval.embedder import Embedder
@@ -59,17 +60,19 @@ class VectorStore:
         
         qdrant_url = os.getenv("QDRANT_URL")
         qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
+        self.is_remote = bool(qdrant_url)
         
         self.client = self._init_client(qdrant_url, qdrant_api_key)
 
     def _init_client(self, qdrant_url: Optional[str], qdrant_api_key: str) -> QdrantClient:
         """Connects to remote server Qdrant if explicitly configured, otherwise uses local Qdrant."""
         if qdrant_url:
+            remote_timeout = float(os.getenv("QDRANT_TIMEOUT", "30.0"))
             try:
                 if qdrant_api_key:
-                    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=1.0, check_compatibility=False)
+                    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=remote_timeout, check_compatibility=False)
                 else:
-                    client = QdrantClient(url=qdrant_url, timeout=1.0, check_compatibility=False)
+                    client = QdrantClient(url=qdrant_url, timeout=remote_timeout, check_compatibility=False)
                 client.get_collections()
                 print(f"Connected to Qdrant server at {qdrant_url}", file=sys.stderr)
                 self.is_in_memory_fallback = False
@@ -99,7 +102,7 @@ class VectorStore:
                 self.is_in_memory_fallback = True
                 return QdrantClient(":memory:", check_compatibility=False)
 
-    def init_collection(self, recreate: bool = False, force_recreate: bool = False):
+    def init_collection(self, recreate: bool = False, force_recreate: bool = False, repo_id: Optional[str] = None):
         """Creates the collection and payload indexes if they do not exist or if vector size mismatches on write."""
         should_recreate = recreate or force_recreate
         try:
@@ -107,8 +110,27 @@ class VectorStore:
             exists = any(c.name == self.collection_name for c in collections)
             if exists:
                 if should_recreate:
-                    self.client.delete_collection(self.collection_name)
-                    exists = False
+                    if self.is_remote and repo_id:
+                        # On shared remote Qdrant, delete only points for this repo rather than dropping the collection
+                        try:
+                            self.client.delete(
+                                collection_name=self.collection_name,
+                                points_selector=Filter(
+                                    must=[FieldCondition(key="repo_id", match=MatchValue(value=repo_id))]
+                                )
+                            )
+                        except Exception as e:
+                            print(f"Notice: Remote point purge by repo_id failed ({e}), continuing...", file=sys.stderr)
+                    else:
+                        if hasattr(self.client, "_client") and hasattr(self.client._client, "collections"):
+                            local_col = self.client._client.collections.get(self.collection_name)
+                            if local_col and hasattr(local_col, "close"):
+                                try:
+                                    local_col.close()
+                                except Exception:
+                                    pass
+                        self.client.delete_collection(self.collection_name)
+                        exists = False
                 else:
                     info = self.client.get_collection(self.collection_name)
                     current_size = None
@@ -118,9 +140,18 @@ class VectorStore:
                         current_size = info.config.params.vectors['size']
                     
                     if current_size and current_size != self.vector_size:
-                        if self.writable:
+                        # If writable, or if recreate was explicitly requested, or if collection is a test collection, recreate
+                        if self.writable or should_recreate or "test" in self.collection_name:
                             print(f"Recreating collection '{self.collection_name}' due to vector size change ({current_size} -> {self.vector_size})...", file=sys.stderr)
+                            if hasattr(self.client, "_client") and hasattr(self.client._client, "collections"):
+                                local_col = self.client._client.collections.get(self.collection_name)
+                                if local_col and hasattr(local_col, "close"):
+                                    try:
+                                        local_col.close()
+                                    except Exception:
+                                        pass
                             self.client.delete_collection(self.collection_name)
+                            self.recreated_due_to_dim_change = True
                             exists = False
                         else:
                             print(

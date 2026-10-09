@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 
 SUMMARIZE_PROMPT = """Analyze the following unified git diff and provide a 2-3 sentence summary of the structural code changes made. Focus on what was added, modified, or deleted, and any key rationale visible in code logic.
 
@@ -46,7 +46,7 @@ class LLMSummarizer:
             try:
                 summary = self.client.generate_text(
                     prompt=prompt,
-                    model="gemini-3.5-flash",
+                    model=DEFAULT_MODEL,
                     temperature=0.0,
                     max_output_tokens=200
                 )
@@ -72,7 +72,7 @@ class LLMSummarizer:
         try:
             results = self.client.generate_json(
                 prompt=prompt,
-                model="gemini-3.5-flash",
+                model=DEFAULT_MODEL,
                 temperature=0.0,
                 max_output_tokens=1500
             )

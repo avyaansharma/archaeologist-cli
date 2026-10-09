@@ -1,6 +1,6 @@
 import sys
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 
 DECOMPOSE_PROMPT = """You are a codebase archaeologist assistant.
 Decompose the following causal 'why' question about a software repository into 1-3 specific, searchable sub-questions.
@@ -18,7 +18,7 @@ Return a JSON object with this exact structure:
 
 def decompose_node(state: AgentState) -> dict:
     question = state["question"]
-    print("Agent: Decomposing question using Gemini 3.5 Flash...", file=sys.stderr)
+    print(f"Agent: Decomposing question using Gemini ({DEFAULT_MODEL})...", file=sys.stderr)
 
     api_key = get_gemini_api_key()
     if not api_key:
@@ -35,7 +35,7 @@ def decompose_node(state: AgentState) -> dict:
         prompt = DECOMPOSE_PROMPT.format(question=question)
         result = client.generate_json(
             prompt=prompt,
-            model="gemini-3.5-flash",
+            model=DEFAULT_MODEL,
             temperature=0.0,
             max_output_tokens=2000
         )

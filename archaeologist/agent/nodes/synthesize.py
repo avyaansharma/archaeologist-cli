@@ -1,6 +1,6 @@
 import sys
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 
 SYNTHESIZE_PROMPT = """You are Codebase Archaeologist, an expert AI assistant that mines git commit history, pull requests, issues, and reverts to answer causal questions about code ("why does this exist", "what broke last time this was touched").
 
@@ -54,11 +54,11 @@ def synthesize_node(state: AgentState) -> dict:
     retrieved = state.get("retrieved_chunks", [])
     unverified = state.get("unverified_claims", [])
     
-    print("Agent: Synthesizing final answer using Gemini 3.5 Flash...", file=sys.stderr)
+    print(f"Agent: Synthesizing final answer using Gemini ({DEFAULT_MODEL})...", file=sys.stderr)
 
     api_key = get_gemini_api_key()
     if not api_key:
-        if draft:
+        if draft and not draft.startswith("Draft generation failed"):
             return {"response": draft}
         return {"response": _format_offline_evidence(question, retrieved)}
 
@@ -80,14 +80,22 @@ def synthesize_node(state: AgentState) -> dict:
         
         response_text = client.generate_text(
             prompt=prompt,
-            model="gemini-3.5-flash",
+            model=DEFAULT_MODEL,
             temperature=0.0,
             max_output_tokens=3000
         )
-        return {"response": response_text or draft}
+        final_answer = response_text or draft
+        if not final_answer or final_answer.startswith("Draft generation failed"):
+            final_answer = _format_offline_evidence(question, retrieved)
+        elif unverified and not state.get("verification_passed", True):
+            if "Notice:" not in final_answer and "disclaim" not in final_answer.lower():
+                final_answer += "\n\n> ⚠️ *Note: Some historical claims could not be conclusively verified against repository commits/PR evidence.*"
+        return {"response": final_answer}
     except Exception as e:
         print(f"Error in synthesize_node: {e}", file=sys.stderr)
-        return {"response": draft or f"Error synthesizing response: {e}"}
+        if draft and not draft.startswith("Draft generation failed"):
+            return {"response": draft}
+        return {"response": _format_offline_evidence(question, retrieved)}
 
 
 

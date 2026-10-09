@@ -1,16 +1,22 @@
 import os
 import sys
 import re
+import subprocess
 from datetime import datetime
 from typing import Optional, List, Callable, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlmodel import select
+from sqlmodel import select, delete
 
 from archaeologist.storage.db import init_db, get_session_context
 from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
 from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex
 from archaeologist.ingestion.git_parser import iter_commits, count_commits, get_commit_diff, is_merge_commit
-from archaeologist.ingestion.revert_detector import detect_revert_from_message, find_reverted_commit
+from archaeologist.ingestion.revert_detector import (
+    detect_revert_from_message,
+    find_reverted_commit,
+    extract_revert_sha_from_message,
+    find_reverted_commit_by_sha
+)
 from archaeologist.ingestion.github_client import GitHubIngestionClient
 from archaeologist.ingestion.link_resolver import update_cross_links
 from archaeologist.ingestion.chunker import chunk_commit, chunk_issue, chunk_pr, chunk_codebase, make_deterministic_chunk_id, token_count
@@ -67,25 +73,27 @@ class IngestionPipeline:
             print(f"[{bounded_pct:3.0f}%] {message}", file=sys.stderr)
 
     def run(self):
-        from archaeologist.storage.paths import get_default_db_url, get_default_bm25_path
-        from archaeologist.storage.context import current_db_url_var, current_bm25_path_var
+        from archaeologist.storage.paths import get_default_db_url, get_default_bm25_path, get_default_qdrant_path
+        from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
         repo_db_url = get_default_db_url(self.repo_path)
         current_db_url_var.set(repo_db_url)
         current_bm25_path_var.set(get_default_bm25_path(self.repo_path))
+        current_qdrant_path_var.set(get_default_qdrant_path(self.repo_path))
+        current_repo_path_var.set(str(self.repo_path))
         
         self._report_progress("init", 0, 100, "Initializing metadata database...", 2.0)
         init_db(repo_db_url)
 
         self._report_progress("init", 50, 100, "Initializing vector store collection...", 5.0)
-        embedder = Embedder()
+        embedder = Embedder(gemini_key=self.gemini_key)
         vector_store = VectorStore(
             vector_size=embedder.dimension,
             storage_path=get_default_qdrant_path(self.repo_path)
         )
         if self.reembed:
-            vector_store.init_collection(force_recreate=True)
+            vector_store.init_collection(force_recreate=True, repo_id=self.repo_id)
         else:
-            vector_store.init_collection()
+            vector_store.init_collection(repo_id=self.repo_id)
         vector_store.close()
 
         # Step 1: Walk git log & Extract AST Symbol Graph at historical commit SHAs
@@ -206,10 +214,12 @@ class IngestionPipeline:
         all_chunks = []
 
         with get_session_context() as session:
-            chk_query = select(Chunk.id)
+            # Purge previous file-source chunks for this repo so updated/deleted files stay consistent
+            del_file_stmt = delete(Chunk).where(Chunk.source_type == "file")
             if self.repo_id:
-                chk_query = chk_query.where(Chunk.repo_id == self.repo_id)
-            existing_chunk_ids = set(session.exec(chk_query).all())
+                del_file_stmt = del_file_stmt.where(Chunk.repo_id == self.repo_id)
+            session.exec(del_file_stmt)
+            session.commit()
 
             candidate_files = []
             git_dir = os.path.join(self.repo_path, ".git")
@@ -247,27 +257,25 @@ class IngestionPipeline:
                         content = f.read()
                     if content.strip():
                         chunk_id = make_deterministic_chunk_id("file", rel_fpath, 0, content, repo_id=self.repo_id)
-                        if chunk_id not in existing_chunk_ids:
-                            chunk_text = f"File {rel_fpath}:\n{content[:3000]}"
-                            try:
-                                mtime_ts = datetime.utcfromtimestamp(os.path.getmtime(abs_fpath))
-                            except Exception:
-                                mtime_ts = datetime.utcnow()
-                            all_chunks.append({
-                                "id": chunk_id,
-                                "repo_id": self.repo_id,
-                                "source_type": "file",
-                                "source_id": rel_fpath,
-                                "text": chunk_text,
-                                "timestamp": mtime_ts,
-                                "file_paths": [rel_fpath],
-                                "symbols_modified": [],
-                                "related_ids": [],
-                                "is_reverted": False,
-                                "token_count": token_count(chunk_text),
-                                "embedded": False
-                            })
-                            existing_chunk_ids.add(chunk_id)
+                        chunk_text = f"File {rel_fpath}:\n{content[:3000]}"
+                        try:
+                            mtime_ts = datetime.utcfromtimestamp(os.path.getmtime(abs_fpath))
+                        except Exception:
+                            mtime_ts = datetime.utcnow()
+                        all_chunks.append({
+                            "id": chunk_id,
+                            "repo_id": self.repo_id,
+                            "source_type": "file",
+                            "source_id": rel_fpath,
+                            "text": chunk_text,
+                            "timestamp": mtime_ts,
+                            "file_paths": [rel_fpath],
+                            "symbols_modified": [],
+                            "related_ids": [],
+                            "is_reverted": False,
+                            "token_count": token_count(chunk_text),
+                            "embedded": False
+                        })
                 except Exception:
                     pass
             session.add_all([Chunk(**c) for c in all_chunks])
@@ -284,30 +292,49 @@ class IngestionPipeline:
             reverts_resolved = 0
             for r_commit in revert_commits:
                 if not r_commit.reverts_sha:
-                    reverted_subject = detect_revert_from_message(r_commit.message)
-                    if reverted_subject:
-                        orig_commit = find_reverted_commit(
+                    # 1. Authoritative git trailer SHA matching
+                    revert_target_sha = extract_revert_sha_from_message(r_commit.message)
+                    orig_commit = None
+                    if revert_target_sha:
+                        orig_commit = find_reverted_commit_by_sha(
                             session,
-                            reverted_subject,
-                            r_commit.authored_date,
+                            revert_target_sha,
                             repo_id=self.repo_id
                         )
-                        if orig_commit:
-                            r_commit.reverts_sha = orig_commit.sha
-                            session.add(r_commit)
-                            orig_commit.superseded_by_sha = r_commit.sha
-                            session.add(orig_commit)
-                            reverts_resolved += 1
+                    # 2. Subject line fallback matching
+                    if not orig_commit:
+                        reverted_subject = detect_revert_from_message(r_commit.message)
+                        if reverted_subject:
+                            orig_commit = find_reverted_commit(
+                                session,
+                                reverted_subject,
+                                r_commit.authored_date,
+                                repo_id=self.repo_id
+                            )
+                    if orig_commit:
+                        r_commit.reverts_sha = orig_commit.sha
+                        session.add(r_commit)
+                        orig_commit.superseded_by_sha = r_commit.sha
+                        session.add(orig_commit)
+                        reverts_resolved += 1
+            session.commit()
         self._report_progress("reverts", 1, 1, f"Resolved {reverts_resolved} revert chains", 41.0)
 
-        # Step 3: Fetch GitHub Issues and PRs (Historical order: direction='asc')
+        # Step 3: Fetch GitHub Issues and PRs (descending by update time with since window filter)
         if self.repo_url and self.github_limit > 0 and not os.getenv("SKIP_GITHUB_API"):
             try:
                 self._report_progress("github", 0, 1, f"Checking GitHub PRs & Issues for {self.repo_url}...", 42.0)
 
+                since_dt = None
+                if self.since_date:
+                    try:
+                        since_dt = datetime.fromisoformat(self.since_date)
+                    except Exception:
+                        pass
+
                 gh_client = GitHubIngestionClient(self.repo_url, token=self.github_token)
-                prs = gh_client.fetch_pull_requests(limit=self.github_limit, direction="asc")
-                issues = gh_client.fetch_issues(limit=self.github_limit, direction="asc")
+                prs = gh_client.fetch_pull_requests(limit=self.github_limit, direction="desc", since=since_dt)
+                issues = gh_client.fetch_issues(limit=self.github_limit, direction="desc", since=since_dt)
                 
                 def _parse_iso_dt(val: Any) -> Optional[datetime]:
                     if not val:
@@ -401,7 +428,7 @@ class IngestionPipeline:
         summarizer = LLMSummarizer()
         
         with get_session_context() as session:
-            c_query = select(Commit)
+            c_query = select(Commit).order_by(Commit.authored_date.desc())
             pr_query = select(PullRequest)
             if self.repo_id:
                 c_query = c_query.where(Commit.repo_id == self.repo_id)
@@ -420,7 +447,7 @@ class IngestionPipeline:
                             pr_by_commit[c.sha] = p.number
 
             eligible_diffs = []
-            for c in list(reversed(all_commits))[:100]:
+            for c in all_commits[:100]:
                 if c.diff_summary:
                     continue
                 if 0 < len(c.files_changed) <= 20:
@@ -447,16 +474,31 @@ class IngestionPipeline:
                 diff_pct = 48.0 + (b_idx / total_diff_batches) * 23.0
                 self._report_progress("diffs", b_idx, total_diff_batches, f"Summarized diff batch {b_idx}/{total_diff_batches}", diff_pct)
 
-            chk_ids_stmt = select(Chunk.id)
-            if self.repo_id:
-                chk_ids_stmt = chk_ids_stmt.where(Chunk.repo_id == self.repo_id)
-            existing_chunk_ids = set(session.exec(chk_ids_stmt).all())
-
-            def add_chunk_if_missing(chunk_info: dict):
+            def upsert_chunk(chunk_info: dict):
                 cid = chunk_info.get("id")
-                if cid and cid not in existing_chunk_ids:
+                if not cid:
+                    return
+                existing = session.get(Chunk, cid)
+                if not existing:
                     session.add(Chunk(**chunk_info))
-                    existing_chunk_ids.add(cid)
+                else:
+                    changed = (
+                        existing.text != chunk_info.get("text") or
+                        existing.is_reverted != chunk_info.get("is_reverted", False) or
+                        set(existing.related_ids or []) != set(chunk_info.get("related_ids") or []) or
+                        set(existing.symbols_modified or []) != set(chunk_info.get("symbols_modified") or []) or
+                        set(existing.file_paths or []) != set(chunk_info.get("file_paths") or [])
+                    )
+                    if changed:
+                        existing.text = chunk_info.get("text", "")
+                        existing.token_count = chunk_info.get("token_count", token_count(existing.text))
+                        existing.is_reverted = chunk_info.get("is_reverted", False)
+                        existing.related_ids = chunk_info.get("related_ids", [])
+                        existing.symbols_modified = chunk_info.get("symbols_modified", [])
+                        existing.file_paths = chunk_info.get("file_paths", [])
+                        existing.timestamp = chunk_info.get("timestamp", existing.timestamp)
+                        existing.embedded = False
+                        session.add(existing)
 
             for c in all_commits:
                 summary = diff_summaries.get(c.sha) or c.diff_summary
@@ -476,16 +518,15 @@ class IngestionPipeline:
                 if isinstance(commit_chunks, dict):
                     commit_chunks = [commit_chunks]
                 for chunk_info in commit_chunks:
-                    add_chunk_if_missing(chunk_info)
+                    upsert_chunk(chunk_info)
 
             for pr in all_prs:
                 pr_dict = pr.model_dump() if hasattr(pr, "model_dump") else dict(pr)
-                print(f"DEBUG PIPELINE PR: {repr(pr)} -> DICT: {repr(pr_dict)}", file=sys.stderr)
                 if not pr_dict or not pr_dict.get("number"):
                     continue
                 pr_chunks = chunk_pr(pr=pr_dict, repo_id=self.repo_id)
                 for chunk_info in pr_chunks:
-                    add_chunk_if_missing(chunk_info)
+                    upsert_chunk(chunk_info)
 
             iss_query = select(Issue)
             if self.repo_id:
@@ -495,11 +536,20 @@ class IngestionPipeline:
                 issue_dict = i.model_dump()
                 issue_chunks = chunk_issue(issue=issue_dict, repo_id=self.repo_id)
                 for chunk_info in issue_chunks:
-                    add_chunk_if_missing(chunk_info)
+                    upsert_chunk(chunk_info)
+
+            # Purge previous code chunks so modified/deleted files are cleanly re-chunked
+            del_code_stmt = delete(Chunk).where(Chunk.source_type == "code")
+            if self.repo_id:
+                del_code_stmt = del_code_stmt.where(Chunk.repo_id == self.repo_id)
+            session.exec(del_code_stmt)
+            session.commit()
 
             code_chunks = chunk_codebase(self.repo_path, repo_id=self.repo_id)
             for chunk_info in code_chunks:
-                add_chunk_if_missing(chunk_info)
+                upsert_chunk(chunk_info)
+
+            session.commit()
 
             linked_count = sum(1 for c in all_commits if c.sha in pr_by_commit)
             self._report_progress("summary", linked_count, len(all_commits) or 1, f"Linked {linked_count} of {len(all_commits)} commits to a PR", 72.0)
@@ -547,6 +597,39 @@ class IngestionPipeline:
             self._report_progress("bm25", len(all_chunk_dicts), len(all_chunk_dicts), "BM25 index saved", 80.0)
 
         # 6b. Qdrant Dense Index
+        # Instantiate writable VectorStore upfront to fail fast on directory locks (D1)
+        actual_dim = embedder.dimension
+        vector_store = VectorStore(
+            vector_size=actual_dim,
+            storage_path=get_default_qdrant_path(self.repo_path),
+            writable=True
+        )
+        if self.reembed:
+            vector_store.init_collection(force_recreate=True, repo_id=self.repo_id)
+        else:
+            vector_store.init_collection(repo_id=self.repo_id)
+
+        # If dimension mismatch caused collection recreation or reembed requested, reset embedded in SQLite
+        if getattr(vector_store, "recreated_due_to_dim_change", False) or self.reembed:
+            with get_session_context() as session:
+                reset_stmt = select(Chunk)
+                if self.repo_id:
+                    reset_stmt = reset_stmt.where(Chunk.repo_id == self.repo_id)
+                for c in session.exec(reset_stmt).all():
+                    c.embedded = False
+                    session.add(c)
+                session.commit()
+
+        from archaeologist.storage.paths import save_stored_repo_meta
+        save_stored_repo_meta(
+            self.repo_id,
+            repo_path=self.repo_path,
+            repo_url=self.repo_url,
+            embedder_provider=getattr(embedder, "provider", None) or getattr(embedder, "model", "gemini"),
+            embedder_dimension=embedder.dimension,
+            last_ingested_at=datetime.utcnow().isoformat()
+        )
+
         with get_session_context() as session:
             unemb_query = select(Chunk).where(Chunk.embedded == False)
             if self.repo_id:
@@ -572,18 +655,6 @@ class IngestionPipeline:
         if total_unembedded > 0:
             self._report_progress("embeddings", 0, total_unembedded, f"Generating embeddings for {total_unembedded} chunks...", 83.0)
             
-            # Instantiate writable VectorStore upfront to fail fast on directory locks (D1)
-            actual_dim = embedder.dimension
-            vector_store = VectorStore(
-                vector_size=actual_dim,
-                storage_path=get_default_qdrant_path(self.repo_path),
-                writable=True
-            )
-            if self.reembed:
-                vector_store.init_collection(force_recreate=True)
-            else:
-                vector_store.init_collection()
-
             total_embedded_count = 0
             batch_size = 100
             
