@@ -65,7 +65,7 @@ def synthesize_node(state: AgentState) -> dict:
     try:
         client = GeminiClientWrapper(api_key=api_key)
         evidence_lines = []
-        for c in retrieved[:20]:
+        for c in retrieved[:50]:
             rel_ids = c.get("related_ids", [])
             rel_str = f" | Linked PRs/Issues: {rel_ids}" if rel_ids else ""
             evidence_lines.append(f"Source: {c.get('source_type', 'commit')} ({c.get('source_id', '')}){rel_str}\nText: {c.get('text', '')}")

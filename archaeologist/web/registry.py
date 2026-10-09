@@ -126,16 +126,79 @@ REPOSITORIES: Dict[str, Dict[str, Any]] = {
     }
 }
 
+def _discover_local_repo() -> Optional[Dict[str, Any]]:
+    """Discovers and registers the local repo if an archaeologist database exists."""
+    from archaeologist.storage.paths import find_repo_root, get_default_db_path, get_default_bm25_path, get_stored_repo_id, resolve_repo_id
+    from archaeologist.storage.context import current_repo_path_var, current_db_url_var, current_bm25_path_var
+    
+    repo_path = current_repo_path_var.get() or os.getenv("ARCHAEOLOGIST_REPO")
+    if not repo_path:
+        try:
+            repo_path = str(find_repo_root())
+        except Exception:
+            repo_path = None
+
+    if not repo_path or not os.path.exists(repo_path):
+        return None
+
+    db_path = get_default_db_path(repo_path)
+    if not os.path.exists(db_path):
+        return None
+
+    repo_id = get_stored_repo_id(repo_path) or resolve_repo_id(repo_path)
+    bm25_path = get_default_bm25_path(repo_path)
+    repo_name = os.path.basename(os.path.abspath(repo_path))
+
+    return {
+        "id": repo_id,
+        "repo_id": repo_id,
+        "name": repo_name,
+        "title": f"Local Repository: {repo_name}",
+        "description": f"Analyzed local git repository at {repo_path}",
+        "db_path": db_path,
+        "bm25_path": bm25_path,
+        "language": "Source Code",
+        "starter_questions": [
+            {
+                "id": "q1",
+                "question": "What were the most fundamental PRs and architecture changes in this repository?",
+                "category": "Architecture & Decisions",
+                "difficulty": "Medium"
+            },
+            {
+                "id": "q2",
+                "question": "Which files or modules experienced the highest change frequency and churn?",
+                "category": "Hotspots & Churn",
+                "difficulty": "Easy"
+            }
+        ]
+    }
+
 def get_repo_config(repo_id: str) -> Optional[Dict[str, Any]]:
     """Returns repository configuration by ID (case-insensitive)."""
-    return REPOSITORIES.get(repo_id.lower().strip())
+    clean_id = repo_id.lower().strip()
+    if clean_id in REPOSITORIES:
+        return REPOSITORIES[clean_id]
+    local_cfg = _discover_local_repo()
+    if local_cfg and (local_cfg["id"].lower() == clean_id or local_cfg["name"].lower() == clean_id):
+        return local_cfg
+    return None
 
 def list_repo_configs() -> List[Dict[str, Any]]:
-    """Returns all configured repository summaries."""
+    """Returns all configured repository summaries, including local ingested repo."""
     configs = []
+    seen = set()
+    local_cfg = _discover_local_repo()
+    if local_cfg:
+        configs.append(local_cfg)
+        seen.add(local_cfg["id"].lower())
+
     for k, v in REPOSITORIES.items():
         item = dict(v)
-        if "id" not in item:
-            item["id"] = item.get("repo_id", k)
-        configs.append(item)
+        rid = item.get("id", k).lower()
+        if rid not in seen:
+            seen.add(rid)
+            if "id" not in item:
+                item["id"] = item.get("repo_id", k)
+            configs.append(item)
     return configs

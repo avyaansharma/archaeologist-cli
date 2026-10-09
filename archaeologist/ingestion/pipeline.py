@@ -3,7 +3,7 @@ import sys
 import re
 import subprocess
 from datetime import datetime
-from typing import Optional, List, Callable, Any
+from typing import Optional, List, Callable, Any, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlmodel import select, delete
 
@@ -502,6 +502,11 @@ class IngestionPipeline:
 
             for c in all_commits:
                 summary = diff_summaries.get(c.sha) or c.diff_summary
+                if not summary and c.files_changed:
+                    # Provide deterministic, zero-cost structural summary for non-LLM summarized commits
+                    files_preview = ", ".join(c.files_changed[:5])
+                    more = f" and {len(c.files_changed) - 5} more" if len(c.files_changed) > 5 else ""
+                    summary = f"Modified {len(c.files_changed)} file(s) ({files_preview}{more}) with +{c.insertions}/-{c.deletions} lines."
                 commit_dict = c.model_dump()
                 related = []
                 if c.sha in pr_by_commit:
