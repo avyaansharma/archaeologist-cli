@@ -80,10 +80,18 @@ def repo_ownership_tool(file_path: Optional[str] = None, repo_id: Optional[str] 
                 file_author_counts[f][author_key] += 1
 
     distribution = {}
+    # Aggregate commits by author display name to avoid multi-email collisions (Audit R6)
+    name_aggregated_counts = Counter()
+    name_to_email = {}
     for author_key, count in author_counts.items():
         disp_name = author_display_names.get(author_key, author_key)
+        name_aggregated_counts[disp_name] += count
+        if "@" in author_key and disp_name not in name_to_email:
+            name_to_email[disp_name] = author_key
+
+    for disp_name, count in name_aggregated_counts.items():
         distribution[disp_name] = {
-            "email": author_key if "@" in author_key else None,
+            "email": name_to_email.get(disp_name),
             "commit_count": count,
             "percentage": round((count / total_commits) * 100, 2) if total_commits > 0 else 0.0
         }

@@ -31,10 +31,13 @@ def _get_embedder():
         _EMBEDDER_INSTANCE = Embedder()
     return _EMBEDDER_INSTANCE
 
-def _get_vector_store(dim: int):
+def _get_vector_store(dim: int, storage_path: Optional[str] = None):
     global _VECTOR_STORE_INSTANCE
-    if _VECTOR_STORE_INSTANCE is None:
-        _VECTOR_STORE_INSTANCE = VectorStore(vector_size=dim)
+    from archaeologist.storage.paths import get_default_qdrant_path
+    from archaeologist.storage.context import current_qdrant_path_var
+    target_path = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
+    if _VECTOR_STORE_INSTANCE is None or getattr(_VECTOR_STORE_INSTANCE, "storage_path", None) != target_path:
+        _VECTOR_STORE_INSTANCE = VectorStore(vector_size=dim, storage_path=target_path)
         _VECTOR_STORE_INSTANCE.init_collection()
     return _VECTOR_STORE_INSTANCE
 

@@ -484,3 +484,56 @@ def test_causal_graph_canonical_symbols():
         assert "symbol:module_a.py::init" in node_ids
         assert "symbol:module_b.py::init" in node_ids
         assert len(node_ids) == 2
+
+
+def test_r6_multi_email_author_share_retention():
+    """Audit R6: A single developer with multiple emails retains both commit counts without dict key collision."""
+    from datetime import datetime, timezone
+    from archaeologist.storage.analytics import repo_ownership_tool
+    from archaeologist.storage.models import Commit
+    from unittest.mock import patch, MagicMock
+
+    c1 = Commit(
+        sha="1111111111111111111111111111111111111111",
+        author_name="Alice Dev",
+        author_email="alice@work.com",
+        authored_date=datetime.now(timezone.utc),
+        message="work commit",
+        files_changed=["main.py"]
+    )
+    c2 = Commit(
+        sha="2222222222222222222222222222222222222222",
+        author_name="Alice Dev",
+        author_email="alice@noreply.github.com",
+        authored_date=datetime.now(timezone.utc),
+        message="personal commit",
+        files_changed=["main.py"]
+    )
+
+    with patch("archaeologist.storage.analytics.get_session_context") as mock_ctx:
+        mock_session = MagicMock()
+        mock_ctx.return_value.__enter__.return_value = mock_session
+        mock_session.exec.return_value.all.return_value = [
+            (c1.author_name, c1.author_email, c1.files_changed),
+            (c2.author_name, c2.author_email, c2.files_changed),
+        ]
+
+        res = repo_ownership_tool()
+        assert res["total_commits"] == 2
+        dist = res["author_distribution"]
+        assert "Alice Dev" in dist
+        assert dist["Alice Dev"]["commit_count"] == 2
+        assert dist["Alice Dev"]["percentage"] == 100.0
+
+
+def test_r4_offline_verification_skips_retries():
+    """Audit R4: When verification judge is unavailable due to missing key, agent router skips retries directly to synthesize."""
+    from archaeologist.agent.graph import verification_router
+
+    state = {
+        "question": "why did this change?",
+        "verification_passed": False,
+        "retry_count": 0,
+        "unverified_claims": ["No Gemini API key available to verify answer."]
+    }
+    assert verification_router(state) == "synthesize"

@@ -62,11 +62,17 @@ workflow.add_conditional_edges(
     }
 )
 
-# Verification router (§1.2 Fix)
+# Verification router (§1.2 Fix & Audit R4)
 def verification_router(state: AgentState):
     if state.get("verification_passed", True):
         return "synthesize"
     
+    # Circuit-break retries if judge was unavailable (no API key or judge fatal error)
+    unverified = state.get("unverified_claims", [])
+    if any("no gemini api key" in str(u).lower() or "judge unavailable" in str(u).lower() for u in unverified):
+        print("Agent: Verification judge unavailable (missing key/offline). Skipping retries and proceeding directly to synthesis.", file=sys.stderr)
+        return "synthesize"
+
     retries = state.get("retry_count", 0)
     if retries >= 2:
         print("Agent: Verification failed after maximum retries. Proceeding to synthesis.", file=sys.stderr)
