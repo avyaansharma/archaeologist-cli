@@ -31,7 +31,7 @@ function getStoredApiKey() {
 }
 
 function getStoredModelTier() {
-  return localStorage.getItem("GEMINI_MODEL_TIER") || "gemini-2.0-flash";
+  return localStorage.getItem("GEMINI_MODEL_TIER") || "gemini-2.5-flash-lite";
 }
 
 function initApiKeyManagement() {
@@ -111,7 +111,7 @@ async function saveAndValidateKey() {
   const statusDiv = document.getElementById("key-validation-status");
 
   const apiKey = keyInput.value.trim();
-  const modelTier = modelSelect ? modelSelect.value : "gemini-2.0-flash";
+  const modelTier = modelSelect ? modelSelect.value : "gemini-2.5-flash-lite";
 
   if (!apiKey) {
     statusDiv.className = "validation-status error";
