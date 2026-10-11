@@ -253,6 +253,9 @@ class VectorStore:
         repo_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Searches collection with vector similarity and payload metadata filters."""
+        if getattr(self, "dimension_mismatch", False):
+            return []
+
         must_filters = []
 
         if repo_id:

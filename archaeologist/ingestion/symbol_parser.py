@@ -103,33 +103,105 @@ def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, 
         except Exception:
             pass
 
-    symbols = []
-    # Multi-language Regex Fallback
-    for match in FUNCTION_REGEX.finditer(code_text):
-        fn_name = match.group(1) or match.group(2) or match.group(3)
-        if not fn_name:
-            continue
-        line_no = code_text[:match.start()].count("\n") + 1
-        symbols.append({
-            "symbol_id": f"{file_path}::{fn_name}",
-            "name": fn_name,
-            "kind": "function",
-            "line_number": line_no,
-            "start_line": line_no
-        })
+    symbols: List[Dict[str, Any]] = []
+    lines = code_text.splitlines()
+    is_python = file_path.endswith(".py")
 
-    for match in CLASS_REGEX.finditer(code_text):
-        cls_name = match.group(1)
-        line_no = code_text[:match.start()].count("\n") + 1
-        symbols.append({
-            "symbol_id": f"{file_path}::{cls_name}",
-            "name": cls_name,
-            "kind": "class",
-            "line_number": line_no,
-            "start_line": line_no
-        })
+    # Class scope stack:
+    # Python: list of (indent_level, class_name)
+    # Curly-brace languages: list of (brace_depth, class_name)
+    class_scope_stack: List[tuple] = []
+    current_brace_depth = 0
+
+    for line_idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("//"):
+            continue
+
+        indent_len = len(line) - len(line.lstrip())
+
+        if not is_python:
+            open_braces = line.count("{")
+            close_braces = line.count("}")
+        else:
+            open_braces = close_braces = 0
+
+        # Pop finished scopes
+        if is_python:
+            while class_scope_stack and indent_len <= class_scope_stack[-1][0]:
+                class_scope_stack.pop()
+        else:
+            while class_scope_stack and current_brace_depth <= class_scope_stack[-1][0]:
+                class_scope_stack.pop()
+
+        # Check for class match
+        cls_match = CLASS_REGEX.match(line)
+        if cls_match:
+            cls_name = cls_match.group(1)
+            qualified_cls = "::".join([c[1] for c in class_scope_stack] + [cls_name]) if class_scope_stack else cls_name
+            symbols.append({
+                "symbol_id": f"{file_path}::{qualified_cls}",
+                "name": cls_name,
+                "kind": "class",
+                "line_number": line_idx,
+                "start_line": line_idx
+            })
+            if is_python:
+                class_scope_stack.append((indent_len, cls_name))
+            else:
+                target_depth = current_brace_depth + (1 if "{" in line else 0)
+                class_scope_stack.append((target_depth, cls_name))
+
+        # Check for function/method match
+        fn_match = FUNCTION_REGEX.match(line)
+        if fn_match:
+            fn_name = fn_match.group(1) or fn_match.group(2) or fn_match.group(3)
+            if fn_name:
+                if class_scope_stack:
+                    qualified_fn = "::".join([c[1] for c in class_scope_stack] + [fn_name])
+                    kind = "method"
+                else:
+                    qualified_fn = fn_name
+                    kind = "function"
+                symbols.append({
+                    "symbol_id": f"{file_path}::{qualified_fn}",
+                    "name": fn_name,
+                    "kind": kind,
+                    "line_number": line_idx,
+                    "start_line": line_idx
+                })
+
+        if not is_python:
+            current_brace_depth += open_braces - close_braces
+
+    # Global regex fallback if line scan found no symbols
+    if not symbols:
+        for match in FUNCTION_REGEX.finditer(code_text):
+            fn_name = match.group(1) or match.group(2) or match.group(3)
+            if not fn_name:
+                continue
+            line_no = code_text[:match.start()].count("\n") + 1
+            symbols.append({
+                "symbol_id": f"{file_path}::{fn_name}",
+                "name": fn_name,
+                "kind": "function",
+                "line_number": line_no,
+                "start_line": line_no
+            })
+
+        for match in CLASS_REGEX.finditer(code_text):
+            cls_name = match.group(1)
+            line_no = code_text[:match.start()].count("\n") + 1
+            symbols.append({
+                "symbol_id": f"{file_path}::{cls_name}",
+                "name": cls_name,
+                "kind": "class",
+                "line_number": line_no,
+                "start_line": line_no
+            })
 
     return symbols
+
 
 def map_lines_to_symbols(symbols: List[Dict[str, Any]], modified_lines: List[int]) -> List[str]:
     """Given a list of symbols and modified lines in a diff, returns symbol_ids that overlap.

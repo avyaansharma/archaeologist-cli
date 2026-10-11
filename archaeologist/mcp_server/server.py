@@ -28,9 +28,10 @@ mcp = FastMCP("Codebase Archaeologist")
 def _get_mcp_repo_context():
     """Resolves repo_path and repo_id for MCP tools."""
     from archaeologist.storage.paths import resolve_repo_id, get_stored_repo_id
+    from archaeologist.cli import _configure_repo_env
     raw_root = os.getenv("ARCHAEOLOGIST_REPO") or os.getenv("GIT_DETECTIVE_REPO") or "."
     abs_root = os.path.abspath(raw_root)
-    rid = get_stored_repo_id(abs_root) or resolve_repo_id(abs_root)
+    rid = _configure_repo_env(repo_path=abs_root) or get_stored_repo_id(abs_root) or resolve_repo_id(abs_root)
     return abs_root, rid
 
 @mcp.tool()
@@ -50,16 +51,19 @@ def search_history(
       date_to: Optional ending date filter (YYYY-MM-DD).
       source_types: List of sources to search: 'commit', 'pr', 'issue'.
     """
-    _, repo_id = _get_mcp_repo_context()
+    abs_root, repo_id = _get_mcp_repo_context()
+    from archaeologist.storage.paths import get_default_qdrant_path
     results = search_history_tool(
         query=query,
         file_path=file_path,
         date_from=date_from,
         date_to=date_to,
         source_types=source_types,
-        repo_id=repo_id
+        repo_id=repo_id,
+        storage_path=get_default_qdrant_path(abs_root)
     )
     return json.dumps(results, indent=2, default=str)
+
 
 @mcp.tool()
 def blame_explain(

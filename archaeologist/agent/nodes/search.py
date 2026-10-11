@@ -86,8 +86,6 @@ def search_node(state: AgentState) -> dict:
     custom_bm25 = current_bm25_path_var.get() or os.getenv("BM25_INDEX_PATH")
     if custom_bm25:
         bm25_path = os.path.abspath(custom_bm25)
-    elif os.path.exists("bm25_index.bin"):
-        bm25_path = os.path.abspath("bm25_index.bin")
     else:
         bm25_path = os.path.abspath(get_default_bm25_path())
 
@@ -100,8 +98,10 @@ def search_node(state: AgentState) -> dict:
 
     all_sparse_hits = []
     all_dense_hits = []
+    all_exact_hits = []
     seen_sparse_ids = set()
     seen_dense_ids = set()
+    seen_exact_ids = set()
 
     for raw_q in queries_to_run:
         query = sanitize_search_query(raw_q)
@@ -163,9 +163,9 @@ def search_node(state: AgentState) -> dict:
                         stmt = stmt.limit(30)
                         exact_chunks = session.exec(stmt).all()
                         for c in exact_chunks:
-                            if c.id not in seen_dense_ids:
-                                seen_dense_ids.add(c.id)
-                                all_dense_hits.append({
+                            if c.id not in seen_exact_ids:
+                                seen_exact_ids.add(c.id)
+                                all_exact_hits.append({
                                     "id": c.id,
                                     "score": 3.0,
                                     "payload": {
@@ -193,9 +193,9 @@ def search_node(state: AgentState) -> dict:
                         stmt = stmt.limit(30)
                         exact_chunks = session.exec(stmt).all()
                         for c in exact_chunks:
-                            if c.id not in seen_dense_ids:
-                                seen_dense_ids.add(c.id)
-                                all_dense_hits.append({
+                            if c.id not in seen_exact_ids:
+                                seen_exact_ids.add(c.id)
+                                all_exact_hits.append({
                                     "id": c.id,
                                     "score": 3.0,
                                     "payload": {
@@ -239,11 +239,11 @@ def search_node(state: AgentState) -> dict:
                     ]
 
                     for c in sym_chunks:
-                        if c.id not in seen_dense_ids:
-                            seen_dense_ids.add(c.id)
-                            all_dense_hits.append({
+                        if c.id not in seen_exact_ids:
+                            seen_exact_ids.add(c.id)
+                            all_exact_hits.append({
                                 "id": c.id,
-                                "score": 1.5,
+                                "score": 2.0,
                                 "payload": {
                                     "id": c.id,
                                     "repo_id": c.repo_id,
@@ -259,7 +259,7 @@ def search_node(state: AgentState) -> dict:
                             })
 
     # 5. SQLite Direct Text Fallback for Low Hit Count
-    if len(all_dense_hits) < 5:
+    if (len(all_dense_hits) + len(all_exact_hits)) < 5:
         with get_session_context() as session:
             from archaeologist.utils.security import escape_like
             for raw_q in queries_to_run:
@@ -271,7 +271,7 @@ def search_node(state: AgentState) -> dict:
                     stmt = stmt.limit(10)
                     matching_chunks = session.exec(stmt).all()
                     for c in matching_chunks:
-                        if c.id not in seen_dense_ids:
+                        if c.id not in seen_dense_ids and c.id not in seen_exact_ids:
                             seen_dense_ids.add(c.id)
                             all_dense_hits.append({
                                 "id": c.id,
@@ -279,7 +279,7 @@ def search_node(state: AgentState) -> dict:
                                 "payload": {
                                     "id": c.id,
                                     "repo_id": c.repo_id,
-                                    "source_type": c.source_type,
+                                    "source_type": "text_fallback",
                                     "source_id": c.source_id,
                                     "text": c.text,
                                     "timestamp": c.timestamp.isoformat() if hasattr(c.timestamp, "isoformat") else c.timestamp,
@@ -292,7 +292,13 @@ def search_node(state: AgentState) -> dict:
 
     # 6. Hybrid Fusion across all accumulated query hits
     primary_query = queries_to_run[0] if queries_to_run else state.get("question", "")
-    fused_results = reciprocal_rank_fusion(all_dense_hits, all_sparse_hits, limit=10, query=primary_query)
+    fused_results = reciprocal_rank_fusion(
+        all_dense_hits,
+        all_sparse_hits,
+        exact_hits=all_exact_hits,
+        limit=10,
+        query=primary_query
+    )
     print(f"Found {len(fused_results)} relevant history chunks across {len(queries_to_run)} search queries.", file=sys.stderr)
 
     retrieved = state.get("retrieved_chunks", [])

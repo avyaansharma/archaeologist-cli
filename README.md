@@ -27,8 +27,8 @@
 
 Archaeologist CLI delivers a first-class terminal experience powered by [Rich](https://rich.readthedocs.io/) and [Typer](https://typer.tiangolo.com/), featuring real-time multi-stage progress spinners, colored churn heatmaps, contribution bars, and structured causal rationale panels.
 
-### 1. Ingestion Engine & Pipeline Progress
-Ingests months or years of git commit history, AST symbols, and linked GitHub PR reviews in seconds with multi-stage progress tracking:
+### 1. Zero-Cost AST Structural Ingestion Engine
+Ingests months or years of git commit history, AST symbols, and linked GitHub PR reviews at zero LLM cost during ingestion using AST structural diff footprints:
 
 <p align="center">
   <img src="docs/images/cli_ingest.svg" alt="Archaeologist CLI — Ingestion Progress" width="95%" />
@@ -37,7 +37,7 @@ Ingests months or years of git commit history, AST symbols, and linked GitHub PR
 ---
 
 ### 2. Forensic Causal Query (`archaeologist ask`)
-Performs multi-hop LangGraph retrieval across commits, PRs, and incident reports to explain the historical rationale behind any architectural decision:
+Performs multi-hop LangGraph retrieval across commits, PRs, and incident reports with Just-In-Time (JIT) query-time diff expansion to explain the historical rationale behind any architectural decision:
 
 <p align="center">
   <img src="docs/images/cli_ask.svg" alt="Archaeologist CLI — Forensic Causal Investigation" width="95%" />
@@ -79,7 +79,7 @@ Discovers hidden dependencies and co-change patterns between files that frequent
 - [Terminal CLI Workflows & Quickstart](#-terminal-cli-workflows--quickstart)
 - [CLI Command Reference](#-cli-command-reference)
 - [Native Model Context Protocol (MCP) Server](#-native-model-context-protocol-mcp-server)
-- [Multi-Hop Agentic Architecture](#-multi-hop-agentic-architecture)
+- [Forensic Pipeline Architecture](#-forensic-pipeline-architecture)
 - [Benchmark Results & Leaderboard](#-benchmark-results--leaderboard)
 - [Production Hardening & Concurrency](#-production-hardening--concurrency)
 - [License](#-license)
@@ -119,12 +119,14 @@ src/services/user.py (fetchUser)
 | :--- | :---: | :---: | :---: |
 | **Analyzes Current Code (*What*)** | ✅ | ✅ | ✅ |
 | **Mines Git History (*Why*)** | ❌ | ❌ | ✅ |
-| **AST Symbol-Aware Chunking** | ❌ | Partial | ✅ *(Class & Method Level)* |
+| **Zero-Cost AST Diff Footprints** | ❌ | ❌ | ✅ *(Zero API calls at ingest)* |
+| **Local Vector Search (ONNX / FastEmbed)** | ❌ | ❌ | ✅ *(384-dim HNSW, CPU-local)* |
+| **Just-In-Time Diff Expansion** | ❌ | ❌ | ✅ *(Full diffs on demand)* |
+| **Multi-Channel RRF Ranking** | ❌ | ❌ | ✅ *(Exact, Dense, BM25, Fallback)* |
+| **AST Symbol-Aware Line Mapping** | ❌ | Partial | ✅ *(Class & Method Level)* |
 | **Bidirectional Revert Tracking** | ❌ | ❌ | ✅ *(`reverts_sha` ↔ `superseded_by`)* |
 | **PR & Issue Discussion Traversal** | ❌ | ❌ | ✅ *(Cross-Link Graph)* |
-| **Multi-Hop Agentic Planning** | ❌ | ❌ | ✅ *(LangGraph State Machine)* |
 | **Anti-Hallucination Fact Verification** | ❌ | ❌ | ✅ *(Deterministic Judge Node)* |
-| **Terminal-First Rich UI** | ❌ | ❌ | ✅ *(Interactive CLI)* |
 | **Native MCP stdio Protocol** | ❌ | ❌ | ✅ *(Claude Desktop / Cursor)* |
 
 ---
@@ -165,7 +167,7 @@ archaeologist setup
 ```
 
 The wizard prompts for:
-- **`GEMINI_API_KEY`**: Powers semantic embeddings and LangGraph causal reasoning ([Get a key](https://aistudio.google.com/app/apikey)).
+- **`GEMINI_API_KEY`**: Powers agent causal reasoning and verification judge ([Get a free key](https://aistudio.google.com/app/apikey)).
 - **`GITHUB_TOKEN`** *(Optional)*: Enriches git commits with PR reviews, discussions, and linked issue reports.
 
 You can also export them directly in your shell or `.env`:
@@ -178,10 +180,10 @@ export GITHUB_TOKEN="ghp_your_token_here"  # Optional
 
 ### 3. Ingest Your Repository
 
-Ingest any local repository into SQLite and the vector store:
+Ingest any local repository into SQLite and local HNSW vector store:
 
 ```bash
-# Fast mode: Ingest the last 6 months of commits (interactive window picker)
+# Standard mode: Ingest the last 6 months of commits (interactive window picker)
 archaeologist ingest . --window 6m
 
 # Full mode: Ingest complete commit history and link remote GitHub PRs/issues
@@ -189,6 +191,9 @@ archaeologist ingest . --window full --repo-url https://github.com/owner/repo
 
 # Re-embed all chunks and recreate vector collection
 archaeologist ingest . --reembed
+
+# Optional: Enable legacy LLM diff summarization at ingest time (default: False, zero-cost AST footprints)
+archaeologist ingest . --llm-summaries
 ```
 
 ---
@@ -226,18 +231,18 @@ archaeologist symbol-history "UserService"
 | :--- | :--- | :--- |
 | **`setup`** *(alias: `init`)* | None | Interactive terminal wizard to configure API keys and persistent preferences. |
 | **`status`** | `[--repo]` `[--json]` | Displays index health, total commits, vector collection count, and chunk stats. |
-| **`ingest`** | `[REPO_PATH]` `--window` `--quick` `--since` `--repo-url` `--reembed` | Ingests git commits, diff hunks, AST symbols, revert links, and GitHub PRs/issues into SQLite + Qdrant. |
+| **`ingest`** | `[REPO_PATH]` `--window` `--quick` `--since` `--repo-url` `--reembed` `--llm-summaries` | Ingests git commits, diff footprints, AST symbols, revert links, and GitHub PRs/issues into SQLite + Qdrant. |
 | **`ask`** | `QUESTION` `[--repo]` `[--db-path]` | Executes the autonomous LangGraph multi-hop retrieval and self-verification agent loop. |
 | **`why`** | `TARGET` `[--repo]` `[--json]` | Explains why a line or range of code exists using git blame and historical commit context (e.g. `src/auth.py:42`). |
-| **`hotspots`** | `[--top-n]` `[--repo]` `[--json]` | Ranks files by modification frequency with formatted churn visualizer bars or JSON. |
-| **`ownership`** | `[--file-path]` `[--repo]` `[--json]` | Computes per-author contribution percentages and flags single-maintainer Bus Factor risks (>60% dominance). |
-| **`coupling`** | `[--min-co-commits]` `[--top-n]` `[--json]` | Detects pairs of files that change together across commits with temporal strength metrics. |
-| **`symbols`** | `[--top-n]` `[--repo]` `[--json]` | Lists extracted AST code symbols (functions, classes, methods) ranked by mutation count. |
-| **`symbol-history`** | `SYMBOL_NAME` `[--repo]` `[--json]` | Traces every commit and diff hunk that modified a specific AST code symbol over time. |
+| **`hotspots`** | `[--top-n]` `[--repo]` `[--db-path]` `[--json]` | Ranks files by modification frequency with formatted churn visualizer bars or JSON. |
+| **`ownership`** | `[--file-path]` `[--repo]` `[--db-path]` `[--json]` | Computes per-author contribution percentages and flags single-maintainer Bus Factor risks (>60% dominance). |
+| **`coupling`** | `[--min-co-commits]` `[--top-n]` `[--repo]` `[--db-path]` `[--json]` | Detects pairs of files that change together across commits with temporal strength metrics. |
+| **`symbols`** | `[--top-n]` `[--repo]` `[--db-path]` `[--json]` | Lists extracted AST code symbols (functions, classes, methods) ranked by mutation count. |
+| **`symbol-history`** | `SYMBOL_NAME` `[--repo]` `[--db-path]` `[--json]` | Traces every commit and diff hunk that modified a specific AST code symbol over time. |
 | **`start-server`** *(alias: `mcp`)* | `[--repo]` | Launches the native Model Context Protocol (MCP) stdio server scoped to a repository. |
 | **`run-eval`** | `[--dataset]` | Runs the evaluation harness against benchmark datasets. |
 
-> **Note on Language Support**: AST symbol parsing (`symbols`, `symbol-history`) currently parses Python (`.py`) abstract syntax trees. For all other programming languages (TypeScript, JavaScript, Go, Rust, Java, C++, etc.), full git commit histories, unified diff hunks, author ownership distributions, temporal change coupling, and GitHub PR/issue cross-references are 100% indexed and fully searchable.
+> **Note on Language Support**: AST symbol parsing (`symbols`, `symbol-history`) parses Python (`.py`) abstract syntax trees. For all other programming languages (TypeScript, JavaScript, Go, Rust, Java, C++, etc.), full git commit histories, unified diff hunks, author ownership distributions, temporal change coupling, and GitHub PR/issue cross-references are 100% indexed and fully searchable.
 
 ---
 
@@ -274,8 +279,8 @@ Archaeologist CLI includes a native MCP stdio server that connects your local co
 {
   "mcpServers": {
     "archaeologist": {
-      "command": "python",
-      "args": ["-m", "archaeologist.cli", "start-server"],
+      "command": "archaeologist",
+      "args": ["mcp", "--repo", "."],
       "env": {
         "GEMINI_API_KEY": "your_gemini_api_key"
       }
@@ -285,76 +290,64 @@ Archaeologist CLI includes a native MCP stdio server that connects your local co
 ```
 
 ### Registered Forensic MCP Tools:
-- `ask(question)`: Runs the autonomous LangGraph multi-hop retrieval and self-verification agent.
-- `search_history(query, file_path, date_from, date_to)`: Hybrid RRF search over commits, PRs, and issues.
-- `blame_explain(file_path, line_start, line_end)`: Explains the causal rationale behind specific lines of code.
-- `find_related_discussion(ref)`: Cross-references commit SHAs, PRs, and issues.
-- `repo_hotspots(top_n)`: Ranks files by commit frequency and churn.
-- `repo_ownership(file_path)`: Analyzes author contribution distribution and flags bus factor risks.
-- `change_coupling(min_co_commits, top_n)`: Identifies file pairs that frequently change together.
-- `symbol_history(symbol_query)`: Traces every commit that modified a specific AST class or function.
+- `ask(question, repo_id)`: Runs the autonomous LangGraph multi-hop retrieval and self-verification agent.
+- `search_history(query, file_path, date_from, date_to, repo_id)`: Hybrid RRF search over commits, PRs, and issues.
+- `blame_explain(file_path, line_start, line_end)`: Explains the causal rationale behind specific lines of code with JIT diff expansion.
+- `find_related_discussion(ref, repo_id)`: Cross-references commit SHAs, PRs, and issues.
+- `repo_hotspots(top_n, repo_id)`: Ranks files by commit frequency and churn.
+- `repo_ownership(file_path, repo_id)`: Analyzes author contribution distribution and flags bus factor risks.
+- `change_coupling(min_co_commits, top_n, repo_id)`: Identifies file pairs that frequently change together.
+- `symbol_history(symbol_name, repo_id)`: Traces every commit that modified a specific AST class or function.
 
 ---
 
-## 🤖 Multi-Hop Agentic Architecture
+## 🤖 Forensic Pipeline Architecture
 
-Archaeologist CLI runs an autonomous, stateful **LangGraph** multi-hop reasoning machine powered by **Google Gemini 3.5 Flash**, **Qdrant**, and **SQLModel**:
+Archaeologist CLI employs a two-tier forensic architecture that eliminates LLM quota exhaustion at ingest time while maximizing synthesis depth at query time:
 
 ```text
-                     ┌─────────────────────────┐
-                     │      User Question      │
-                     └────────────┬────────────┘
-                                  │
-                       ┌──────────▼──────────┐
-                       │  Candidate Forensics│ (Scans query for verified PRs,
-                       │  Discovery Engine   │  commit SHAs, & AST symbols)
-                       └──────────┬──────────┘
-                                  │
-                       ┌──────────▼──────────┐
-                       │  Decompose & Plan   │ (Generates 2-3 focused
-                       │      Planner        │  forensic search vectors)
-                       └──────────┬──────────┘
-                                  │
-              ┌───────────────────┴───────────────────┐
-              ▼                                       ▼
-     ┌─────────────────┐                     ┌─────────────────┐
-     │ Hybrid Search   │                     │ AST Symbol Graph│
-     │ (Qdrant + BM25) │                     │ Direct Lookup   │
-     └────────┬────────┘                     └────────┬────────┘
-              │                                       │
-              └───────────────────┬───────────────────┘
-                                  ▼
-                     ┌─────────────────────────┐
-                     │  Cross-Link Traversal   │◄──── Dynamic Re-planning
-                     │ (Commit ↔ PR ↔ Issue)   │      if evidence missing
-                     └────────────┬────────────┘
-                                  │
-                       ┌──────────▼──────────┐
-                       │  Self-Verification  │──► Verification Failed?
-                       │      Judge Node     │    (Reset query & retry)
-                       └──────────┬──────────┘
-                                  │ Passed
-                       ┌──────────▼──────────┐
-                       │ Grounded Synthesis  │
-                       │ + Verified Citations│
-                       └─────────────────────┘
+======================= INGESTION TIER (Zero-Cost Local) =======================
+  Git Commit History ──► AST Structural Diff Footprint Extraction
+          │                       │
+          ▼                       ▼
+  Local SQLite (FTS5/BM25)  FastEmbed (ONNX 384-dim) ──► Qdrant HNSW Index
+          │                       │
+          └───────────────────────┴───────────────────────────────┐
+                                                                  ▼
+======================= QUERY TIER (Agentic Multi-Hop) =========================
+  User Question ──► Candidate Forensics Discovery (Exact SHA/PR/#Issue)
+                          │
+                          ▼
+                    Decompose & Plan
+                          │
+                          ▼
+            Multi-Channel Reciprocal Rank Fusion (RRF)
+     ┌────────────────────┬────────────────────┬────────────────────┐
+     │ Exact Channel      │ Dense Vector (HNSW)│ Sparse BM25        │ Keyword Fallback
+     │ (Weight: 2.5)      │ (Weight: 1.0)      │ (Weight: 1.0)      │ (Weight: 0.2)
+     └────────────────────┴────────────────────┴────────────────────┘
+                          │
+                          ▼
+                Cross-Link Graph Traversal (Commit ↔ PR ↔ Issue)
+                          │
+                          ▼
+                JIT Query-Time Diff Expansion (Fetches unified diffs on-demand)
+                          │
+                          ▼
+                Self-Verification Judge (4,000 Token Budget + Quota Circuit-Breaker)
+                          │
+                          ▼
+                Grounded Forensic Synthesis with Exact Provenance Citations
 ```
 
-1. **Candidate Forensics Discovery**: Matches question terms against real `SymbolIndex` entries and PR numbers to ground planner queries before generation begins.
-2. **Hybrid Reciprocal Rank Fusion (RRF)**: Merges sparse BM25 keyword matching with dense Qdrant vector embeddings to balance exact token lookups with conceptual understanding.
-3. **AST Method-Level Decomposition**: Splits large classes (>600 tokens) into class headers and independent per-method chunks with dedicated `symbols_modified` metadata.
-4. **Self-Verifying Reflection Loop**: An independent fact-checker node validates claims against retrieved evidence, purging unverified assertions before generating the final answer.
+1. **Zero-Cost AST Structural Patch Ingestion**: Commits are indexed using author metadata, commit messages, touched file paths, and exact AST symbol signatures without making LLM diff summarization API calls.
+2. **Multi-Channel Reciprocal Rank Fusion (RRF)**: Disentangles exact token matches from semantic vectors. Exact commit SHAs and PR numbers receive a prioritized boost without allowing fallback keyword matches to displace high-similarity vector hits.
+3. **Just-In-Time (JIT) Diff Expansion**: Unified diffs are extracted directly from git blobs during synthesis and `blame_explain`, providing complete contextual patch lines exactly when needed.
+4. **Self-Verifying Reflection Loop with Quota Circuit-Breaker**: An independent fact-checker node validates claims against evidence under a 4,000-token evidence budget. If quota limits (429) occur, the circuit breaker bypasses retries to ensure graceful degradation.
 
 ---
 
 ## 🏆 Benchmark Results & Leaderboard
-
-Performance and forensic accuracy are continuously measured using the forensic ground-truth benchmark datasets located in [`eval/dataset/`](eval/dataset/) (`qa_pairs.jsonl` and `unseen_eval_pairs.jsonl`).
-
-```bash
-# Run the automated benchmark harness over the dataset
-archaeologist run-eval --eval-file eval/dataset/qa_pairs.jsonl
-```
 
 Evaluated using a deterministic mathematical scoring harness combining LLM-as-a-Judge semantic entailment with exact commit SHA / PR citation verification:
 
@@ -374,20 +367,13 @@ $$\text{Grounded Accuracy} = 0.70 \times \text{Atomic Fact Entailment} + 0.30 \t
 
 ## 🛡️ Production Hardening & Concurrency
 
-Archaeologist CLI is engineered for high-concurrency production environments:
+Archaeologist CLI is engineered for high-concurrency production environments and developer workstations:
 
 - **ContextVar Request Isolation**: Web and API servers use `contextvars.ContextVar` for coroutine-scoped isolation, preventing environment variable race conditions across concurrent async requests.
-- **Engine Connection Pooling**: `get_engine_for_url` maintains cached connection pools across multiple repositories, preventing connection disposal thrashing and SQLite lock contention.
-- **Atomic Index Persistence**: BM25 serialization writes to thread/PID-unique temporary files with `os.fsync` and atomic `os.replace` to prevent corrupted index reads.
-- **Cross-Process Qdrant Resilience**: Embedded Qdrant client automatically falls back to in-memory mode if another process holds the local directory lock, allowing simultaneous CLI queries and MCP sessions.
-- **Multi-Key API Rotation**: Automatic rotation across `GEMINI_API_KEY`, `GEMINI_API_KEY_SECONDARY`, and `GOOGLE_API_KEY` on `429 RESOURCE_EXHAUSTED` or authentication errors.
-
----
-
-## 🌐 Separate Web UI Dashboard
-
-Looking for the optional graphical browser dashboard? Archaeologist CLI includes a separate headless web server (`archaeologist serve` / `archaeologist ui`).  
-See [web/README.md](web/README.md) for web assets and browser dashboard instructions.
+- **SQLite WAL Mode & Connection Pooling**: Automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on all database connections prevent lock contention and disposal thrashing.
+- **Fail-Loud Vector Writer Locks**: When the local Qdrant directory is accessed by an active MCP server or UI session, writes fail cleanly with `VectorStoreLockedError` rather than silently losing embeddings in volatile memory.
+- **Rate-Limit Resilient Agent**: Automatic quota circuit-breaking prevents unbounded retry loops when Google Gemini 429 rate limits are encountered.
+- **Tracked Git File Isolation**: Code ingestion lists files with `git ls-files`, strictly ignoring untracked `.env` files, build caches, and test artifacts.
 
 ---
 

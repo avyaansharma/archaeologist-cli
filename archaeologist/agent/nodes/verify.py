@@ -48,7 +48,8 @@ def verify_node(state: AgentState) -> dict:
         return {
             "draft_answer": draft or "No Gemini API key available to verify answer.",
             "verification_passed": False,
-            "unverified_claims": ["No Gemini API key available to verify answer."]
+            "unverified_claims": ["Judge unavailable: No Gemini API key available to verify answer."],
+            "judge_unavailable": True
         }
 
     client = GeminiClientWrapper(api_key=api_key)
@@ -56,7 +57,17 @@ def verify_node(state: AgentState) -> dict:
     known_shas = set()
     known_prs_issues = set()
 
-    for c in retrieved[:50]:
+    # Sort chunks by relevance score descending to pick top evidence under token budget
+    sorted_chunks = sorted(
+        retrieved,
+        key=lambda c: float(c.get("rrf_score") or c.get("score") or 0.0),
+        reverse=True
+    )
+
+    total_evidence_chars = 0
+    max_evidence_chars = 16000  # ~4000 tokens safe budget to prevent prompt overflow
+
+    for c in sorted_chunks[:50]:
         sid = str(c.get("source_id", ""))
         if sid:
             known_shas.add(sid.lower()[:7])
@@ -68,10 +79,19 @@ def verify_node(state: AgentState) -> dict:
             if m:
                 known_prs_issues.add(m.group(1))
         rel_str = f" [Linked PRs/Issues: {rel_ids}]" if rel_ids else ""
-        evidence_lines.append(f"[{c.get('id', '')}]{rel_str} {c.get('text', '')}")
+        line = f"[{c.get('id', '')}]{rel_str} {c.get('text', '')}"
+        if total_evidence_chars + len(line) > max_evidence_chars and evidence_lines:
+            break
+        evidence_lines.append(line)
+        total_evidence_chars += len(line)
+
     evidence_text = "\n\n".join(evidence_lines)
 
-    # 1. Force Draft Answer regeneration if missing or if previous verification failed (§1 Fix)
+    def _is_judge_unavailable_error(err_str: str) -> bool:
+        low = err_str.lower()
+        return any(k in low for k in ("429", "resource_exhausted", "quota", "rate limit", "no gemini api key", "unauthorized", "invalid api key"))
+
+    # 1. Force Draft Answer regeneration if missing or if previous verification failed
     if not draft or not verification_passed:
         draft = None
         try:
@@ -84,6 +104,13 @@ def verify_node(state: AgentState) -> dict:
             )
         except Exception as e:
             print(f"Error generating draft answer: {e}", file=sys.stderr)
+            if _is_judge_unavailable_error(str(e)):
+                return {
+                    "draft_answer": "Draft generation unavailable due to Gemini API quota/rate limit.",
+                    "verification_passed": False,
+                    "unverified_claims": [f"Judge unavailable: {e}"],
+                    "judge_unavailable": True
+                }
             draft = "Draft generation failed."
 
     # 2. Fact-Check Draft Answer against Evidence
@@ -112,13 +139,16 @@ def verify_node(state: AgentState) -> dict:
         return {
             "draft_answer": draft,
             "verification_passed": passed,
-            "unverified_claims": unverified
+            "unverified_claims": unverified,
+            "judge_unavailable": False
         }
     except Exception as e:
         print(f"Error in verify_node: {e}", file=sys.stderr)
+        is_unavail = _is_judge_unavailable_error(str(e))
         return {
             "draft_answer": draft,
             "verification_passed": False,
-            "unverified_claims": [f"Verification error: {e}"]
+            "unverified_claims": [f"{'Judge unavailable: ' if is_unavail else 'Verification error: '}{e}"],
+            "judge_unavailable": is_unavail
         }
 

@@ -44,8 +44,9 @@ def get_archaeologist_dir(repo_path: Optional[str] = None, create: bool = True) 
     return arch_dir
 
 
-from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
+get_repo_data_dir = get_archaeologist_dir
 
+from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
 
 def resolve_repo_id(repo_path: str, repo_url: Optional[str] = None) -> str:
     """Computes canonical repo_id (owner/name or dir name)."""
@@ -107,8 +108,37 @@ def save_stored_repo_meta(
         pass
 
 
-def get_stored_repo_id(repo_path: Optional[str] = None) -> Optional[str]:
-    """Retrieves stored repo_id from meta.json or SQLite repo_meta table."""
+def get_stored_repo_id(repo_path: Optional[str] = None, db_path: Optional[str] = None) -> Optional[str]:
+    """Retrieves stored repo_id from meta.json, SQLite repo_meta table, or database tables."""
+    direct_db = db_path
+    if not direct_db and repo_path and (repo_path.endswith(".db") or os.path.isfile(repo_path)):
+        direct_db = repo_path
+        repo_path = None
+
+    if direct_db and os.path.exists(direct_db):
+        try:
+            conn = sqlite3.connect(direct_db)
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT repo_id FROM repo_meta WHERE repo_id IS NOT NULL AND repo_id != '' LIMIT 1")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    conn.close()
+                    return row[0]
+            except Exception:
+                pass
+            try:
+                cursor.execute("SELECT repo_id FROM [commit] WHERE repo_id IS NOT NULL AND repo_id != '' LIMIT 1")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    conn.close()
+                    return row[0]
+            except Exception:
+                pass
+            conn.close()
+        except Exception:
+            pass
+
     try:
         arch_dir = get_archaeologist_dir(repo_path)
         meta_file = arch_dir / "meta.json"
@@ -122,15 +152,27 @@ def get_stored_repo_id(repo_path: Optional[str] = None) -> Optional[str]:
     try:
         db_url = get_default_db_url(repo_path)
         if db_url.startswith("sqlite:///"):
-            db_path = db_url.split("?")[0].replace("sqlite:///", "")
-            if os.path.exists(db_path):
-                conn = sqlite3.connect(db_path)
+            cand_db = db_url.split("?")[0].replace("sqlite:///", "")
+            if os.path.exists(cand_db):
+                conn = sqlite3.connect(cand_db)
                 cursor = conn.cursor()
-                cursor.execute("SELECT repo_id FROM repo_meta LIMIT 1")
-                row = cursor.fetchone()
+                try:
+                    cursor.execute("SELECT repo_id FROM repo_meta WHERE repo_id IS NOT NULL AND repo_id != '' LIMIT 1")
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        conn.close()
+                        return row[0]
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("SELECT repo_id FROM [commit] WHERE repo_id IS NOT NULL AND repo_id != '' LIMIT 1")
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        conn.close()
+                        return row[0]
+                except Exception:
+                    pass
                 conn.close()
-                if row and row[0]:
-                    return row[0]
     except Exception:
         pass
     return None

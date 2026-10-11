@@ -67,10 +67,14 @@ def verification_router(state: AgentState):
     if state.get("verification_passed", True):
         return "synthesize"
     
-    # Circuit-break retries if judge was unavailable (no API key or judge fatal error)
+    # Circuit-break retries if judge was unavailable (no API key, quota limit, 429, or judge fatal error)
+    if state.get("judge_unavailable"):
+        print("Agent: Verification judge unavailable (missing key/quota limit/offline). Skipping retries and proceeding directly to synthesis.", file=sys.stderr)
+        return "synthesize"
+
     unverified = state.get("unverified_claims", [])
-    if any("no gemini api key" in str(u).lower() or "judge unavailable" in str(u).lower() for u in unverified):
-        print("Agent: Verification judge unavailable (missing key/offline). Skipping retries and proceeding directly to synthesis.", file=sys.stderr)
+    if any(any(k in str(u).lower() for k in ("no gemini api key", "judge unavailable", "429", "resource_exhausted", "quota", "rate limit")) for u in unverified):
+        print("Agent: Verification judge unavailable (quota/network/key). Skipping retries and proceeding directly to synthesis.", file=sys.stderr)
         return "synthesize"
 
     retries = state.get("retry_count", 0)

@@ -247,3 +247,81 @@ def test_claim_25_sqlite_busy_timeout():
     with engine.connect() as conn:
         res = conn.exec_driver_sql("PRAGMA busy_timeout;").scalar()
         assert res == 10000
+
+def test_arch_status_cli_runs_without_import_error(tmp_path):
+    from archaeologist.cli import app
+    from typer.testing import CliRunner
+    runner = CliRunner()
+    res = runner.invoke(app, ["status", "--repo", str(tmp_path)])
+    assert res.exit_code == 0
+    assert "Repository Index Health" in res.output
+
+def test_requirements_txt_sqlmodel_pinned():
+    repo_root = os.path.dirname(os.path.dirname(__file__))
+    req_path = os.path.join(repo_root, "requirements.txt")
+    with open(req_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "sqlmodel>=0.0.39,<0.0.45" in content
+
+def test_mcp_search_history_storage_path_configured(tmp_path):
+    from archaeologist.mcp_server.server import _get_mcp_repo_context
+    from archaeologist.mcp_server.tools import search_history_tool
+    from archaeologist.storage.paths import get_default_qdrant_path
+    os.environ["ARCHAEOLOGIST_REPO"] = str(tmp_path)
+    abs_root, rid = _get_mcp_repo_context()
+    assert os.environ.get("ARCHAEOLOGIST_REPO") == abs_root
+    assert os.environ.get("QDRANT_STORAGE_PATH") == get_default_qdrant_path(abs_root)
+    # Calling search_history_tool with storage_path should not error
+    res = search_history_tool("test", repo_id=rid, storage_path=str(tmp_path / "custom_qdrant"))
+    assert isinstance(res, list)
+
+def test_pr_incremental_comments_synced(tmp_path):
+    from archaeologist.storage.db import init_db, get_session_context
+    from archaeologist.storage.models import PullRequest
+    db_file = str(tmp_path / "test.db")
+    init_db(f"sqlite:///{db_file}")
+
+    with get_session_context(f"sqlite:///{db_file}") as session:
+        pr = PullRequest(
+            repo_id="test/repo",
+            number=42,
+            title="Initial Title",
+            state="open",
+            created_at=datetime.utcnow(),
+            comments=[{"body": "first comment"}]
+        )
+        session.add(pr)
+        session.commit()
+
+    # Simulate pipeline updating comments
+    with get_session_context(f"sqlite:///{db_file}") as session:
+        from sqlmodel import select
+        existing = session.exec(select(PullRequest).where(PullRequest.number == 42)).first()
+        assert existing is not None
+        pr_data = {"comments": [{"body": "first comment"}, {"body": "second comment"}]}
+        existing.comments = pr_data["comments"]
+        session.add(existing)
+        session.commit()
+
+    with get_session_context(f"sqlite:///{db_file}") as session:
+        reloaded = session.exec(select(PullRequest).where(PullRequest.number == 42)).first()
+        assert len(reloaded.comments) == 2
+        assert reloaded.comments[1]["body"] == "second comment"
+
+def test_symbol_parser_regex_fallback_class_scoping():
+    code = """
+class AuthHandler:
+    def login(self, username):
+        print 'python2 print syntax that breaks ast.parse'
+
+def global_helper():
+    pass
+"""
+    # Calling on .py file with syntax error forces ast.parse failure and regex fallback
+    syms = extract_symbols_from_code(code, "auth_broken.py")
+    sym_map = {s["name"]: s["symbol_id"] for s in syms}
+    assert "login" in sym_map
+    assert "auth_broken.py::AuthHandler::login" == sym_map["login"]
+    assert "auth_broken.py::global_helper" == sym_map["global_helper"]
+
+

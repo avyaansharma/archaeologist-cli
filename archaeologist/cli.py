@@ -48,7 +48,7 @@ def _configure_repo_env(repo_path: Optional[str] = None, db_path: Optional[str] 
         current_bm25_path_var.set(os.environ["BM25_INDEX_PATH"])
         current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
         current_repo_path_var.set(repo_dir)
-        repo_id = get_stored_repo_id(repo_dir)
+        repo_id = get_stored_repo_id(db_path=abs_db)
     return repo_id
 
 import sys
@@ -126,7 +126,8 @@ def ingest(
     quick: bool = typer.Option(False, "--quick", "-q", help="Quick mode alias for '--window 6m'"),
     gemini_key: Optional[str] = typer.Option(None, "--gemini-key", help="Google Gemini API key for semantic vectors and reasoning"),
     github_token: Optional[str] = typer.Option(None, "--github-token", help="GitHub Personal Access Token for remote PR/issue enrichment"),
-    reembed: bool = typer.Option(False, "--reembed", help="Re-embed all chunks and recreate vector collection")
+    reembed: bool = typer.Option(False, "--reembed", help="Re-embed all chunks and recreate vector collection"),
+    llm_summaries: bool = typer.Option(False, "--llm-summaries", help="Enable optional LLM diff summarization during ingest (default: False, using zero-cost AST structural patch footprint)")
 ):
     """Ingests commits, PRs, issues, AST symbols, and reverts into local repository vector & metadata store."""
     from archaeologist.ingestion.pipeline import IngestionPipeline
@@ -266,7 +267,8 @@ def ingest(
             progress_callback=on_progress,
             github_token=os.getenv("GITHUB_TOKEN"),
             gemini_key=os.getenv("GEMINI_API_KEY"),
-            reembed=reembed
+            reembed=reembed,
+            enable_llm_summaries=llm_summaries
         )
         try:
             pipeline.run()
@@ -334,8 +336,8 @@ def status(
             pass
 
         if "embedder_provider" not in meta_dict or meta_dict["embedder_provider"] == "none":
-            from archaeologist.storage.paths import get_repo_data_dir
-            meta_json_path = os.path.join(get_repo_data_dir(resolved_root), "meta.json")
+            from archaeologist.storage.paths import get_archaeologist_dir
+            meta_json_path = os.path.join(get_archaeologist_dir(resolved_root), "meta.json")
             if os.path.exists(meta_json_path):
                 try:
                     with open(meta_json_path, "r", encoding="utf-8") as f:

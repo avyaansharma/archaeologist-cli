@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 def reciprocal_rank_fusion(
     dense_hits: List[Dict[str, Any]], 
     sparse_hits: List[Dict[str, Any]], 
+    exact_hits: Optional[List[Dict[str, Any]]] = None,
     k: int = 60,
     limit: int = 10,
     query: Optional[str] = None
@@ -103,9 +104,40 @@ def reciprocal_rank_fusion(
 
         rrf_scores[chunk_id] += score_contrib * decay_factor * symbol_boost
 
-    # Process dense (vector) hits sorted by raw score descending
+    # Process channels: Exact matches, Dense vectors, Sparse BM25, and Fallback keyword hits
+    exact_list = list(exact_hits or [])
+    dense_vector_list = []
+    fallback_list = []
+
+    for hit in dense_hits:
+        sc = float(hit.get("score") if hit.get("score") is not None else 0.0)
+        cid = str(hit.get("id") or (hit.get("payload") or {}).get("id") or "")
+        # Exact hits: score >= 2.0 (e.g. SHA/PR matches with 3.0)
+        if sc >= 2.0:
+            exact_list.append(hit)
+        # Fallback hits: score 1.0 or id starts with like_
+        elif sc == 1.0 or cid.startswith("like_") or (hit.get("payload") or {}).get("source_type") == "text_fallback":
+            fallback_list.append(hit)
+        else:
+            dense_vector_list.append(hit)
+
+    # 1. Exact matches channel (weight 2.5)
+    sorted_exact = sorted(
+        exact_list,
+        key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
+        reverse=True
+    )
+    for rank, hit in enumerate(sorted_exact, start=1):
+        raw_payload = hit.get("payload")
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or f"exact_{rank}"
+        if "id" not in payload:
+            payload["id"] = chunk_id
+        add_hit(chunk_id, rank, payload, initial_weight=2.5)
+
+    # 2. Dense vector channel (weight 1.0)
     sorted_dense = sorted(
-        dense_hits,
+        dense_vector_list,
         key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
         reverse=True
     )
@@ -115,9 +147,9 @@ def reciprocal_rank_fusion(
         chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or str(rank)
         if "id" not in payload:
             payload["id"] = chunk_id
-        add_hit(chunk_id, rank, payload)
+        add_hit(chunk_id, rank, payload, initial_weight=1.0)
 
-    # Process sparse (BM25) hits sorted by raw score descending
+    # 3. Sparse (BM25) channel (weight 1.0)
     sorted_sparse = sorted(
         sparse_hits,
         key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
@@ -144,7 +176,16 @@ def reciprocal_rank_fusion(
             "related_ids": chunk_data.get("related_ids", []),
             "is_reverted": chunk_data.get("is_reverted", False)
         }
-        add_hit(chunk_id, rank, payload)
+        add_hit(chunk_id, rank, payload, initial_weight=1.0)
+
+    # 4. Fallback keyword channel (weight 0.2 to prevent burying genuine vector hits)
+    for rank, hit in enumerate(fallback_list, start=1):
+        raw_payload = hit.get("payload")
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or f"fallback_{rank}"
+        if "id" not in payload:
+            payload["id"] = chunk_id
+        add_hit(chunk_id, rank, payload, initial_weight=0.2)
 
     # Sort candidates desc by RRF score
     sorted_ids = sorted(rrf_scores.keys(), key=lambda cid: rrf_scores[cid], reverse=True)

@@ -11,5 +11,7 @@ class AgentState(TypedDict):
     draft_answer: Optional[str]
     verification_passed: bool
     unverified_claims: List[str]
+    judge_unavailable: Optional[bool]
     retry_count: int
     response: Optional[str]
+    _current_plan: Optional[Dict[str, Any]]

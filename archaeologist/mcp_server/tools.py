@@ -35,12 +35,13 @@ def search_history_tool(
     date_to: Optional[str] = None,
     source_types: Optional[List[str]] = None,
     limit: int = 10,
-    repo_id: Optional[str] = None
+    repo_id: Optional[str] = None,
+    storage_path: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Hybrid search over commit/PR/issue history for a repo."""
     bm25 = BM25Index()
-    from archaeologist.storage.paths import get_default_bm25_path
-    from archaeologist.storage.context import current_bm25_path_var
+    from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
+    from archaeologist.storage.context import current_bm25_path_var, current_qdrant_path_var
     custom_bm25 = current_bm25_path_var.get() or os.getenv("BM25_INDEX_PATH")
     bm25_path = custom_bm25 or get_default_bm25_path()
     sparse_hits = []
@@ -57,7 +58,9 @@ def search_history_tool(
         )
 
     embedder = Embedder()
-    vector_store = VectorStore(vector_size=embedder.dimension)
+    target_qdrant = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
+    vector_store = VectorStore(vector_size=embedder.dimension, storage_path=target_qdrant)
+
     dense_hits = []
     try:
         query_vectors, success_flags = embedder.embed_texts([query], return_success_flags=True)
@@ -285,6 +288,18 @@ def blame_explain_tool(
                             "message": msg,
                             "is_revert": False
                         })
+                except Exception:
+                    pass
+
+            # Attach concise file diff preview if available
+            if commits_data and commits_data[-1].get("sha") == sha:
+                try:
+                    diff_proc = subprocess.run(
+                        ["git", "-c", "core.quotepath=false", "-C", validated_repo, "show", "--format=", "--unified=2", sha, "--", clean_file_path],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace"
+                    )
+                    if diff_proc.returncode == 0 and diff_proc.stdout.strip():
+                        commits_data[-1]["diff"] = diff_proc.stdout.strip()[:1500]
                 except Exception:
                     pass
 

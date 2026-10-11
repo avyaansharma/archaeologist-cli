@@ -1,6 +1,10 @@
+import os
 import sys
 from archaeologist.agent.state import AgentState
 from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
+from archaeologist.storage.context import current_repo_path_var
+from archaeologist.storage.paths import find_repo_root
+from archaeologist.ingestion.git_parser import get_commit_diff
 
 SYNTHESIZE_PROMPT = """You are Codebase Archaeologist, an expert AI assistant that mines git commit history, pull requests, issues, and reverts to answer causal questions about code ("why does this exist", "what broke last time this was touched").
 
@@ -64,11 +68,31 @@ def synthesize_node(state: AgentState) -> dict:
 
     try:
         client = GeminiClientWrapper(api_key=api_key)
+        repo_path = state.get("repo_path") or current_repo_path_var.get() or str(find_repo_root())
         evidence_lines = []
+        diffs_fetched = 0
+        seen_commit_shas = set()
+
         for c in retrieved[:50]:
+            stype = c.get("source_type", "commit")
+            sid = c.get("source_id", "")
             rel_ids = c.get("related_ids", [])
             rel_str = f" | Linked PRs/Issues: {rel_ids}" if rel_ids else ""
-            evidence_lines.append(f"Source: {c.get('source_type', 'commit')} ({c.get('source_id', '')}){rel_str}\nText: {c.get('text', '')}")
+            chunk_entry = f"Source: {stype} ({sid}){rel_str}\nText: {c.get('text', '')}"
+            
+            # JIT diff expansion for top candidate commits
+            if stype == "commit" and sid and sid not in seen_commit_shas and diffs_fetched < 5:
+                seen_commit_shas.add(sid)
+                if repo_path and os.path.exists(repo_path):
+                    try:
+                        raw_diff = get_commit_diff(repo_path, sid, max_bytes=2500)
+                        if raw_diff and raw_diff.strip():
+                            chunk_entry += f"\n--- JIT Unified Diff Preview ({sid[:7]}) ---\n{raw_diff.strip()}"
+                            diffs_fetched += 1
+                    except Exception:
+                        pass
+
+            evidence_lines.append(chunk_entry)
         evidence_text = "\n\n".join(evidence_lines)
 
         prompt = SYNTHESIZE_PROMPT.format(

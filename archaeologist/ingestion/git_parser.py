@@ -143,7 +143,7 @@ def get_commit_diff(repo_path: str, sha: str, max_bytes: int = 20_000) -> str:
         cmd.extend(["-m", "--first-parent"])
     cmd.extend([clean_sha, "--format=", "--unified=3"])
     
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
     diff_lines = []
     total_bytes = 0
     try:

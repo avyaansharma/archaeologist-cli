@@ -146,7 +146,7 @@ class GitHubIngestionClient:
         self,
         state: str = "all",
         limit: int = 500,
-        sort: str = "created",
+        sort: str = "updated",
         direction: str = "desc",
         since: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
@@ -173,8 +173,9 @@ class GitHubIngestionClient:
 
                 if count >= limit:
                     break
-                if since and issue.created_at:
-                    issue_c = issue.created_at.replace(tzinfo=None) if hasattr(issue.created_at, 'tzinfo') and issue.created_at.tzinfo else issue.created_at
+                issue_ts = issue.updated_at or issue.created_at
+                if since and issue_ts:
+                    issue_c = issue_ts.replace(tzinfo=None) if hasattr(issue_ts, 'tzinfo') and issue_ts.tzinfo else issue_ts
                     since_cmp = since.replace(tzinfo=None) if hasattr(since, 'tzinfo') and since.tzinfo else since
                     if issue_c < since_cmp:
                         break
