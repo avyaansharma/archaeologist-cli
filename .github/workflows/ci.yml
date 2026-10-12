@@ -31,8 +31,13 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Install dependencies
-        run: uv sync --locked --all-extras || uv pip install -e ".[dev]"
+        run: uv sync --locked
 
       - name: Run Ruff Lint Check
         run: uv run ruff check archaeologist tests

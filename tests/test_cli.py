@@ -1,3 +1,5 @@
+import re
+
 from typer.testing import CliRunner
 
 from archaeologist.cli import app
@@ -97,16 +99,18 @@ def test_calculate_window_since():
 def test_cli_ingest_window_options():
     result = runner.invoke(app, ["ingest", "--help"])
     assert result.exit_code == 0
-    assert "--window" in result.output
-    assert "'6m'" in result.output
-    assert "'1y'" in result.output
-    assert "'2y'" in result.output
-    assert "'full'" in result.output
+    clean_output = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", result.output)
+    assert "--window" in clean_output
+    assert "'6m'" in clean_output
+    assert "'1y'" in clean_output
+    assert "'2y'" in clean_output
+    assert "'full'" in clean_output
 
     # Invalid window exits with code 1
     err_res = runner.invoke(app, ["ingest", "--window", "invalid_window"])
     assert err_res.exit_code == 1
-    assert "Invalid window" in err_res.output
+    clean_err = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", err_res.output)
+    assert "Invalid window" in clean_err
 
 
 def test_mcp_server_initialization():
