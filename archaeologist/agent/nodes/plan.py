@@ -1,8 +1,9 @@
 import sys
+
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import find_candidate_forensics
+from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 PLAN_PROMPT = """You are a codebase archaeologist planner.
 Given the current sub-question, generate 2-3 targeted search queries to query the repository commit logs, pull requests, and issues.
@@ -86,7 +87,8 @@ def plan_node(state: AgentState) -> dict:
             max_output_tokens=2000
         )
         queries = result.get("search_queries", [current_sub_q])
-        return {"search_queries": queries if queries else [current_sub_q]}
+        plan_dict = {"queries": queries, "sub_question": current_sub_q}
+        return {"search_queries": queries if queries else [current_sub_q], "_current_plan": plan_dict}
     except Exception as e:
         print(f"Error in plan_node: {e}", file=sys.stderr)
-        return {"search_queries": [current_sub_q]}
+        return {"search_queries": [current_sub_q], "_current_plan": {"queries": [current_sub_q], "sub_question": current_sub_q}}

@@ -1,9 +1,10 @@
-import os
 import ast
+import os
 import re
 import subprocess
-from typing import List, Dict, Any, Optional
-from archaeologist.utils.security import validate_repo_path, sanitize_sha, sanitize_file_path
+from typing import Any
+
+from archaeologist.utils.security import sanitize_file_path, sanitize_sha, validate_repo_path
 
 # Multi-language regex patterns supporting Python, JS/TS, Go, Java/C#, and Rust (§4 Fix)
 FUNCTION_REGEX = re.compile(
@@ -22,7 +23,7 @@ CLASS_REGEX = re.compile(
     re.MULTILINE
 )
 
-def resolve_file_path(repo_path: str, fpath: str) -> Optional[str]:
+def resolve_file_path(repo_path: str, fpath: str) -> str | None:
     """Resolves relative git diff path against local repo root directory."""
     p1 = os.path.join(repo_path, fpath)
     if os.path.exists(p1) and os.path.isfile(p1):
@@ -34,7 +35,7 @@ def resolve_file_path(repo_path: str, fpath: str) -> Optional[str]:
             return sub_path
     return None
 
-def get_git_file_content(repo_path: str, sha: str, file_path: str) -> Optional[str]:
+def get_git_file_content(repo_path: str, sha: str, file_path: str) -> str | None:
     """Retrieves file content at a specific historical git commit SHA using `git show sha:file_path`."""
     try:
         validated_repo = validate_repo_path(repo_path)
@@ -51,8 +52,8 @@ def get_git_file_content(repo_path: str, sha: str, file_path: str) -> Optional[s
 class _SymbolVisitor(ast.NodeVisitor):
     def __init__(self, file_path: str):
         self.file_path = file_path
-        self.class_stack: List[str] = []
-        self.symbols: List[Dict[str, Any]] = []
+        self.class_stack: list[str] = []
+        self.symbols: list[dict[str, Any]] = []
 
     def visit_ClassDef(self, node: ast.ClassDef):
         qualified = "::".join(self.class_stack + [node.name]) if self.class_stack else node.name
@@ -92,7 +93,7 @@ class _SymbolVisitor(ast.NodeVisitor):
         })
         self.generic_visit(node)
 
-def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, Any]]:
+def extract_symbols_from_code(code_text: str, file_path: str) -> list[dict[str, Any]]:
     """Parses code text using Python AST if .py, or multi-language regex fallback for other languages."""
     if file_path.endswith(".py"):
         try:
@@ -103,14 +104,14 @@ def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, 
         except Exception:
             pass
 
-    symbols: List[Dict[str, Any]] = []
+    symbols: list[dict[str, Any]] = []
     lines = code_text.splitlines()
     is_python = file_path.endswith(".py")
 
     # Class scope stack:
     # Python: list of (indent_level, class_name)
     # Curly-brace languages: list of (brace_depth, class_name)
-    class_scope_stack: List[tuple] = []
+    class_scope_stack: list[tuple] = []
     current_brace_depth = 0
 
     for line_idx, line in enumerate(lines, start=1):
@@ -203,7 +204,7 @@ def extract_symbols_from_code(code_text: str, file_path: str) -> List[Dict[str, 
     return symbols
 
 
-def map_lines_to_symbols(symbols: List[Dict[str, Any]], modified_lines: List[int]) -> List[str]:
+def map_lines_to_symbols(symbols: list[dict[str, Any]], modified_lines: list[int]) -> list[str]:
     """Given a list of symbols and modified lines in a diff, returns symbol_ids that overlap.
     Prioritizes the most specific inner symbol (smallest line range).
     Enclosing classes are only attributed if modified lines fall outside any enclosed method.
@@ -228,7 +229,7 @@ def map_lines_to_symbols(symbols: List[Dict[str, Any]], modified_lines: List[int
         symbol_spans.append((sym, s_line, e_line, span_length))
 
     touched_symbols = []
-    for line in sorted(list(lines_set)):
+    for line in sorted(lines_set):
         matching = [
             (sym, span_len)
             for (sym, s_line, e_line, span_len) in symbol_spans
@@ -246,7 +247,7 @@ def map_lines_to_symbols(symbols: List[Dict[str, Any]], modified_lines: List[int
 
 class DiffLineBucket(dict):
     """Dictionary holding 'added' and 'deleted' line numbers, with backward-compatible list operations."""
-    def __init__(self, added: Optional[List[int]] = None, deleted: Optional[List[int]] = None):
+    def __init__(self, added: list[int] | None = None, deleted: list[int] | None = None):
         super().__init__({"added": added or [], "deleted": deleted or []})
 
     def __contains__(self, item):
@@ -256,9 +257,9 @@ class DiffLineBucket(dict):
 
     def __iter__(self):
         combined = set(self["added"]) | set(self["deleted"])
-        return iter(sorted(list(combined)))
+        return iter(sorted(combined))
 
-def extract_modified_line_numbers_from_diff(diff_text: str) -> Dict[str, DiffLineBucket]:
+def extract_modified_line_numbers_from_diff(diff_text: str) -> dict[str, DiffLineBucket]:
     """Parses a unified git diff and returns a dict mapping file paths to DiffLineBucket (added and deleted line numbers)."""
     file_lines = {}
     current_file = None

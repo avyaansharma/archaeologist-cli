@@ -7,18 +7,17 @@ Validates fixes for:
 - D3/R9: Direct SQLite database repo_id resolution in CLI
 """
 import os
-import pytest
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from archaeologist.retrieval.fusion import reciprocal_rank_fusion
-from archaeologist.agent.nodes.verify import verify_node
 from archaeologist.agent.graph import verification_router
-from archaeologist.storage.paths import get_stored_repo_id
+from archaeologist.agent.nodes.verify import verify_node
 from archaeologist.cli import _configure_repo_env
+from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+from archaeologist.storage.paths import get_stored_repo_id
 
 
-def _make_hit(cid: str, score: float, source_type: str = "commit", text: str = "") -> Dict[str, Any]:
+def _make_hit(cid: str, score: float, source_type: str = "commit", text: str = "") -> dict[str, Any]:
     return {
         "id": cid,
         "score": score,
@@ -26,7 +25,7 @@ def _make_hit(cid: str, score: float, source_type: str = "commit", text: str = "
             "id": cid,
             "source_type": source_type,
             "text": text or f"Content for {cid}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "symbols_modified": [],
             "related_ids": []
         }
@@ -51,8 +50,9 @@ def test_d31_exact_match_outranks_ordinary_hits():
 
 def test_r1_github_issues_defaults_and_updated_at():
     """R1: fetch_issues must default to sort='updated' and compare against updated_at."""
-    from archaeologist.ingestion.github_client import GitHubIngestionClient
     import inspect
+
+    from archaeologist.ingestion.github_client import GitHubIngestionClient
 
     sig = inspect.signature(GitHubIngestionClient.fetch_issues)
     assert sig.parameters["sort"].default == "updated"
@@ -137,8 +137,8 @@ def test_r4_verify_node_circuit_breaker_on_missing_api_key(monkeypatch):
 
 def test_r4_verify_node_evidence_budget():
     """R4: Evidence must be sorted by score and capped to token budget without unbounded explosion."""
-    from archaeologist.agent.nodes.verify import verify_node
     import archaeologist.agent.nodes.verify as verify_module
+    from archaeologist.agent.nodes.verify import verify_node
 
     captured_prompts = []
 
@@ -185,6 +185,6 @@ def test_d3_db_path_repo_id_scoping():
     if os.path.exists(flask_db):
         repo_id = get_stored_repo_id(db_path=flask_db)
         assert repo_id == "flask"
-        
+
         configured_id = _configure_repo_env(db_path=flask_db)
         assert configured_id == "flask"

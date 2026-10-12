@@ -1,16 +1,17 @@
 import datetime
 import math
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 
 def reciprocal_rank_fusion(
-    dense_hits: List[Dict[str, Any]], 
-    sparse_hits: List[Dict[str, Any]], 
-    exact_hits: Optional[List[Dict[str, Any]]] = None,
+    dense_hits: list[dict[str, Any]],
+    sparse_hits: list[dict[str, Any]],
+    exact_hits: list[dict[str, Any]] | None = None,
     k: int = 60,
     limit: int = 10,
-    query: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    query: str | None = None
+) -> list[dict[str, Any]]:
     """Applies Time-Decay Reciprocal Rank Fusion (RRF) to merge vector and keyword search results.
     
     Incorporate:
@@ -18,10 +19,10 @@ def reciprocal_rank_fusion(
     2. AST Symbol Exact Match Rank Boosting (Option 2): 2.0x score boost for active AST symbols matching query.
     3. Zero-Latency Intent Detection (Option 3): Relax decay when query asks for historical motivation (why/revert/PR).
     """
-    rrf_scores: Dict[str, float] = {}
-    chunk_payloads: Dict[str, Dict[str, Any]] = {}
+    rrf_scores: dict[str, float] = {}
+    chunk_payloads: dict[str, dict[str, Any]] = {}
 
-    current_year = datetime.datetime.now(datetime.timezone.utc).year
+    current_year = datetime.datetime.now(datetime.UTC).year
 
     # Option 3: Zero-Latency Intent Detection
     is_historical_intent = False
@@ -31,13 +32,27 @@ def reciprocal_rank_fusion(
             is_historical_intent = True
 
     # Option 2: Extract query symbols for AST exact match boosting
+    COMMON_STOPWORDS = {
+        "why", "how", "what", "when", "where", "which", "with", "that", "this",
+        "from", "into", "were", "been", "have", "some", "more", "make", "made",
+        "here", "there", "then", "them", "they", "will", "would", "could", "should",
+        "does", "done", "about", "after", "before", "added", "removed", "fixed",
+        "changed", "change", "updating", "updated", "modify", "modified", "the",
+        "and", "for", "also", "over", "under", "again", "only", "such", "handler"
+    }
     query_symbols = set()
+    ident_symbols = set()
     if query:
-        raw_syms = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]{3,})\b', query)
-        query_symbols = {s.lower() for s in raw_syms if len(s) >= 4}
+        raw_syms = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]{2,})\b', query)
+        for s in raw_syms:
+            s_low = s.lower()
+            if len(s) >= 3 and s_low not in COMMON_STOPWORDS:
+                query_symbols.add(s_low)
+                if "_" in s or any(c.isupper() for c in s):
+                    ident_symbols.add(s_low)
 
     # Helper to clean/standardize payload representation and apply RRF + decay + boost
-    def add_hit(chunk_id: str, rank: int, payload: Dict[str, Any], initial_weight: float = 1.0):
+    def add_hit(chunk_id: str, rank: int, payload: dict[str, Any], initial_weight: float = 1.0):
         if chunk_id not in rrf_scores:
             rrf_scores[chunk_id] = 0.0
             chunk_payloads[chunk_id] = payload
@@ -99,7 +114,7 @@ def reciprocal_rank_fusion(
             # Exact match on qualified or bare symbol name (prevents loose substring collisions)
             if any(qs in bare_symbols for qs in query_symbols):
                 symbol_boost = 1.75
-            elif any(qs in text_content.lower() for qs in query_symbols):
+            elif ident_symbols and any(re.search(rf'\b{re.escape(qs)}\b', text_content, re.IGNORECASE) for qs in ident_symbols):
                 symbol_boost = 1.15
 
         rrf_scores[chunk_id] += score_contrib * decay_factor * symbol_boost
@@ -160,10 +175,10 @@ def reciprocal_rank_fusion(
         if not isinstance(chunk_data, dict):
             chunk_data = {}
         chunk_id = chunk_data.get("id") or str(rank)
-        
+
         ts = chunk_data.get("timestamp")
         ts_iso = ts.isoformat() if (ts and hasattr(ts, "isoformat")) else ts
-        
+
         payload = {
             "id": chunk_id,
             "repo_id": chunk_data.get("repo_id"),

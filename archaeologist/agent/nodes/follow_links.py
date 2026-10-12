@@ -1,20 +1,23 @@
 import sys
-from typing import Optional
+
 from sqlmodel import select
+
 from archaeologist.agent.state import AgentState
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import Chunk
 from archaeologist.utils.security import escape_like
 
-def _apply_repo_filter(stmt, model_col, repo_id: Optional[str]):
+
+def _apply_repo_filter(stmt, model_col, repo_id: str | None):
     if not repo_id:
         return stmt
     clean_repo = repo_id.strip()
     clean_lower = clean_repo.lower()
     base_repo = clean_repo.split("/")[-1]
     base_lower = clean_lower.split("/")[-1]
-    from archaeologist.utils.security import escape_like
     from sqlalchemy import func
+
+    from archaeologist.utils.security import escape_like
     escaped_base = escape_like(base_repo)
     escaped_base_lower = escape_like(base_lower)
     return stmt.where(
@@ -52,9 +55,9 @@ def follow_links_node(state: AgentState) -> dict:
             escaped = escape_like(clean_ref)
             ref_lower = ref.lower()
             is_explicit_issue_pr = (
-                ref.startswith("#") or 
-                ref_lower.startswith("issue#") or 
-                ref_lower.startswith("pr#") or 
+                ref.startswith("#") or
+                ref_lower.startswith("issue#") or
+                ref_lower.startswith("pr#") or
                 ref_lower.startswith("pull#")
             )
             has_hex_alpha = any(c in "abcdefABCDEF" for c in clean_ref)
@@ -62,7 +65,7 @@ def follow_links_node(state: AgentState) -> dict:
                 (len(clean_ref) >= 7 and has_hex_alpha and all(c in "0123456789abcdefABCDEF" for c in clean_ref)) or
                 (len(clean_ref) >= 40 and all(c in "0123456789abcdefABCDEF" for c in clean_ref))
             )
-            
+
             if is_sha:
                 stmt = select(Chunk).where(
                     (Chunk.source_id == ref) |
@@ -79,7 +82,7 @@ def follow_links_node(state: AgentState) -> dict:
 
             stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
             stmt = stmt.limit(5)
-            
+
             results = session.exec(stmt).all()
             for c in results:
                 if c.id not in seen_ids:
@@ -107,5 +110,5 @@ def follow_links_node(state: AgentState) -> dict:
             "retrieved_chunks": current_chunks + new_chunks,
             "evidence_by_chunk_id": evidence_map
         }
-    
+
     return {}

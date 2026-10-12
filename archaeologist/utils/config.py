@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 CONFIG_FILE_NAME = "config.json"
 
@@ -20,12 +20,12 @@ def get_global_config_dir() -> Path:
     return config_dir
 
 
-def load_user_config() -> Dict[str, Any]:
+def load_user_config() -> dict[str, Any]:
     """Loads user configuration from ~/.archaeologist/config.json."""
     config_file = get_global_config_dir() / CONFIG_FILE_NAME
     if config_file.exists():
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
+            with open(config_file, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
@@ -34,7 +34,7 @@ def load_user_config() -> Dict[str, Any]:
     return {}
 
 
-def save_user_config(config: Dict[str, Any]) -> None:
+def save_user_config(config: dict[str, Any]) -> None:
     """Saves user configuration to ~/.archaeologist/config.json with restrictive permissions."""
     config_dir = get_global_config_dir()
     config_file = config_dir / CONFIG_FILE_NAME

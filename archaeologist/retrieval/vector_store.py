@@ -2,21 +2,32 @@ import os
 import sys
 import uuid
 import warnings
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchAny, Range, PayloadSchemaType
+from datetime import UTC, datetime
+from typing import Any
+
 from dotenv import load_dotenv
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchAny,
+    MatchValue,
+    PayloadSchemaType,
+    PointStruct,
+    Range,
+    VectorParams,
+)
 
 from archaeologist.storage.paths import get_default_qdrant_path
 
 load_dotenv()
 warnings.filterwarnings("ignore", category=UserWarning, module="qdrant_client")
 
-import threading
 import atexit
+import threading
 
-_LOCAL_CLIENTS: Dict[str, QdrantClient] = {}
+_LOCAL_CLIENTS: dict[str, QdrantClient] = {}
 _CLIENT_LOCK = threading.Lock()
 
 def _cleanup_all_local_clients():
@@ -40,8 +51,8 @@ class VectorStore:
     def __init__(
         self,
         collection_name: str = "repo_history",
-        vector_size: Optional[int] = None,
-        storage_path: Optional[str] = None,
+        vector_size: int | None = None,
+        storage_path: str | None = None,
         writable: bool = False
     ):
         self.collection_name = collection_name
@@ -57,14 +68,14 @@ class VectorStore:
         else:
             self.vector_size = vector_size
         self.is_in_memory_fallback = False
-        
+
         qdrant_url = os.getenv("QDRANT_URL")
         qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
         self.is_remote = bool(qdrant_url)
-        
+
         self.client = self._init_client(qdrant_url, qdrant_api_key)
 
-    def _init_client(self, qdrant_url: Optional[str], qdrant_api_key: str) -> QdrantClient:
+    def _init_client(self, qdrant_url: str | None, qdrant_api_key: str) -> QdrantClient:
         """Connects to remote server Qdrant if explicitly configured, otherwise uses local Qdrant."""
         if qdrant_url:
             remote_timeout = float(os.getenv("QDRANT_TIMEOUT", "30.0"))
@@ -83,7 +94,7 @@ class VectorStore:
         self.is_in_memory_fallback = False
         raw_path = self.storage_path or get_default_qdrant_path()
         local_path = os.path.abspath(raw_path)
-        
+
         with _CLIENT_LOCK:
             if local_path in _LOCAL_CLIENTS:
                 return _LOCAL_CLIENTS[local_path]
@@ -102,7 +113,7 @@ class VectorStore:
                 self.is_in_memory_fallback = True
                 return QdrantClient(":memory:", check_compatibility=False)
 
-    def init_collection(self, recreate: bool = False, force_recreate: bool = False, repo_id: Optional[str] = None):
+    def init_collection(self, recreate: bool = False, force_recreate: bool = False, repo_id: str | None = None):
         """Creates the collection and payload indexes if they do not exist or if vector size mismatches on write."""
         should_recreate = recreate or force_recreate
         try:
@@ -138,7 +149,7 @@ class VectorStore:
                         current_size = info.config.params.vectors.size
                     elif isinstance(info.config.params.vectors, dict) and 'size' in info.config.params.vectors:
                         current_size = info.config.params.vectors['size']
-                    
+
                     if current_size and current_size != self.vector_size:
                         # If writable, or if recreate was explicitly requested, or if collection is a test collection, recreate
                         if self.writable or should_recreate or "test" in self.collection_name:
@@ -164,7 +175,7 @@ class VectorStore:
         except Exception as e:
             print(f"Warning checking collection existence: {e}", file=sys.stderr)
             exists = False
-        
+
         if not exists:
             self.client.create_collection(
                 collection_name=self.collection_name,
@@ -189,7 +200,7 @@ class VectorStore:
                 except Exception:
                     pass
 
-    def upsert_chunks(self, chunks: List[dict], embeddings: List[List[float]], batch_size: int = 100):
+    def upsert_chunks(self, chunks: list[dict], embeddings: list[list[float]], batch_size: int = 100):
         """Upserts chunks and their embeddings to Qdrant in batches of batch_size."""
         if not embeddings:
             return
@@ -212,6 +223,24 @@ class VectorStore:
             c_clean = c_repo.strip().lower() if c_repo else ""
             c_base = c_clean.split("/")[-1] if c_clean else ""
             repo_tags = list(dict.fromkeys([x for x in [c_repo, c_clean, c_base] if x]))
+            ts_val = chunk["timestamp"]
+            ts_unix = 0
+            if hasattr(ts_val, "timestamp"):
+                if getattr(ts_val, "tzinfo", None) is None:
+                    ts_unix = int(ts_val.replace(tzinfo=UTC).timestamp())
+                else:
+                    ts_unix = int(ts_val.astimezone(UTC).timestamp())
+            elif isinstance(ts_val, str):
+                try:
+                    s_clean = ts_val.strip().replace("Z", "+00:00")
+                    dt_p = datetime.fromisoformat(s_clean)
+                    if dt_p.tzinfo is None:
+                        ts_unix = int(dt_p.replace(tzinfo=UTC).timestamp())
+                    else:
+                        ts_unix = int(dt_p.astimezone(UTC).timestamp())
+                except Exception:
+                    pass
+
             points.append(PointStruct(
                 id=point_id,
                 vector=embedding,
@@ -225,14 +254,14 @@ class VectorStore:
                     "source_id": chunk["source_id"],
                     "text": chunk["text"],
                     "timestamp": chunk["timestamp"].isoformat() if hasattr(chunk["timestamp"], "isoformat") else chunk["timestamp"],
-                    "timestamp_unix": int(chunk["timestamp"].timestamp()) if hasattr(chunk["timestamp"], "timestamp") else 0,
+                    "timestamp_unix": ts_unix,
                     "file_paths": chunk.get("file_paths", []),
                     "symbols_modified": chunk.get("symbols_modified", []),
                     "related_ids": chunk.get("related_ids", []),
                     "is_reverted": chunk.get("is_reverted", False),
                 }
             ))
-        
+
         if points:
             for i in range(0, len(points), batch_size):
                 batch = points[i:i + batch_size]
@@ -242,16 +271,16 @@ class VectorStore:
                 )
 
     def search_chunks(
-        self, 
-        query_vector: List[float], 
+        self,
+        query_vector: list[float],
         limit: int = 10,
-        file_path: Optional[str] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        source_types: Optional[List[str]] = None,
-        is_reverted: Optional[bool] = None,
-        repo_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        file_path: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        source_types: list[str] | None = None,
+        is_reverted: bool | None = None,
+        repo_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Searches collection with vector similarity and payload metadata filters."""
         if getattr(self, "dimension_mismatch", False):
             return []
@@ -263,10 +292,11 @@ class VectorStore:
             base = clean.split("/")[-1]
             candidate_repos = {clean, base, repo_id}
             try:
+                from sqlmodel import select
+
                 from archaeologist.storage.db import get_session_context
                 from archaeologist.storage.models import Commit
                 from archaeologist.utils.security import escape_like
-                from sqlmodel import select
                 with get_session_context() as session:
                     escaped_base = escape_like(base)
                     stmt = select(Commit.repo_id).where(
@@ -286,17 +316,18 @@ class VectorStore:
                 FieldCondition(key="repo_aliases", match=MatchValue(value=base))
             ]
             must_filters.append(Filter(should=repo_conditions))
-        
+
         if file_path:
             norm_fp = file_path.replace("\\", "/")
             candidate_paths = [norm_fp]
             fp_base = os.path.basename(norm_fp)
-            
+
             try:
+                from sqlmodel import select
+
                 from archaeologist.storage.db import get_session_context
                 from archaeologist.storage.models import Chunk
                 from archaeologist.utils.security import escape_like
-                from sqlmodel import select
                 with get_session_context() as session:
                     escaped_base = escape_like(fp_base)
                     stmt = select(Chunk.file_paths).where(Chunk.file_paths.like(f"%{escaped_base}%", escape="\\"))
@@ -320,32 +351,37 @@ class VectorStore:
             else:
                 must_filters.append(FieldCondition(key="file_paths", match=MatchValue(value=candidate_paths[0])))
 
-            
+
         if is_reverted is not None:
             must_filters.append(FieldCondition(key="is_reverted", match=MatchValue(value=is_reverted)))
 
-            
+
         if source_types:
             must_filters.append(FieldCondition(key="source_type", match=MatchAny(any=source_types)))
-            
-        def _safe_parse_datetime(dt_val: Any) -> Optional[datetime]:
+
+        def _safe_parse_datetime(dt_val: Any) -> datetime | None:
             if not dt_val:
                 return None
             if isinstance(dt_val, datetime):
-                return dt_val
+                if dt_val.tzinfo is None:
+                    return dt_val.replace(tzinfo=UTC)
+                return dt_val.astimezone(UTC)
             if not isinstance(dt_val, str):
                 return None
             clean_str = dt_val.strip()
             if clean_str.endswith("Z"):
                 clean_str = clean_str[:-1] + "+00:00"
             try:
-                return datetime.fromisoformat(clean_str)
+                dt = datetime.fromisoformat(clean_str)
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=UTC)
+                return dt.astimezone(UTC)
             except Exception:
                 import re
                 m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", clean_str)
                 if m:
                     try:
-                        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=UTC)
                     except Exception:
                         pass
             return None
@@ -359,12 +395,15 @@ class VectorStore:
             if date_to:
                 parsed_to = _safe_parse_datetime(date_to)
                 if parsed_to:
+                    if len(str(date_to).strip()) == 10:
+                        from datetime import timedelta
+                        parsed_to = parsed_to + timedelta(days=1) - timedelta(microseconds=1)
                     range_filter["lte"] = int(parsed_to.timestamp())
             if range_filter:
                 must_filters.append(FieldCondition(key="timestamp_unix", range=Range(**range_filter)))
-            
+
         query_filter = Filter(must=must_filters) if must_filters else None
-        
+
         try:
             if hasattr(self.client, "query_points"):
                 res = self.client.query_points(
@@ -386,7 +425,7 @@ class VectorStore:
         except Exception as e:
             print(f"Error executing Qdrant search: {e}", file=sys.stderr)
             results = []
-        
+
         hits = []
         for hit in results:
             payload = dict(hit.payload) if isinstance(hit.payload, dict) else {}

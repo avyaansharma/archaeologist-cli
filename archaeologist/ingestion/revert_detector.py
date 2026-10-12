@@ -1,6 +1,8 @@
 import re
-from typing import Optional
-from sqlmodel import Session, select
+from datetime import UTC
+
+from sqlmodel import Session, or_, select
+
 from archaeologist.storage.models import Commit
 
 REVERT_MSG_PATTERN = re.compile(r'^Revert(?:\s+|:\s+)["\']?([^"\']+)["\']?', re.IGNORECASE)
@@ -10,7 +12,7 @@ def _escape_like(s: str) -> str:
     """Escapes SQL LIKE wildcard characters (%, _, \\)."""
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-def extract_revert_sha_from_message(message: str) -> Optional[str]:
+def extract_revert_sha_from_message(message: str) -> str | None:
     """Extracts authoritative SHA from git's 'This reverts commit <sha>' trailer if present."""
     if not message:
         return None
@@ -19,22 +21,22 @@ def extract_revert_sha_from_message(message: str) -> Optional[str]:
         return m.group(1).lower()
     return None
 
-def detect_revert_from_message(message: str) -> Optional[str]:
+def detect_revert_from_message(message: str) -> str | None:
     """Returns the subject line of the reverted commit if this looks like a git-generated revert."""
     if not message:
         return None
     first_line = message.strip().splitlines()[0].strip()
-    
+
     # 1. Git default format: Revert "<subject>"
     m = re.match(r'^Revert\s+"(.*)"$', first_line, re.IGNORECASE)
     if m:
         return m.group(1).strip()
-        
+
     # 2. Single quotes format: Revert '<subject>'
     m = re.match(r"^Revert\s+'(.*)'$", first_line, re.IGNORECASE)
     if m:
         return m.group(1).strip()
-        
+
     # 3. Colon format: Revert: <subject>
     m = re.match(r'^Revert:\s*(.+)$', first_line, re.IGNORECASE)
     if m:
@@ -56,8 +58,8 @@ def detect_revert_from_message(message: str) -> Optional[str]:
 def find_reverted_commit_by_sha(
     db_session: Session,
     target_sha: str,
-    repo_id: Optional[str] = None
-) -> Optional[Commit]:
+    repo_id: str | None = None
+) -> Commit | None:
     """Looks up original commit directly by SHA prefix (authoritative match)."""
     clean_sha = target_sha.lower()
     stmt = select(Commit).where(Commit.sha.like(f"{clean_sha}%"))
@@ -69,13 +71,21 @@ def find_reverted_commit(
     db_session: Session,
     reverted_subject: str,
     before_date,
-    repo_id: Optional[str] = None
-) -> Optional[Commit]:
+    repo_id: str | None = None
+) -> Commit | None:
     """git revert messages embed the ORIGINAL subject line, not its sha. Look it up by matching
     subject text among commits before this one. If multiple matches, take the most recent."""
+    if hasattr(before_date, "tzinfo") and before_date.tzinfo is not None:
+        before_date = before_date.astimezone(UTC).replace(tzinfo=None)
     escaped_subject = _escape_like(reverted_subject)
     stmt = (select(Commit)
-            .where(Commit.message.like(f"{escaped_subject}%", escape="\\"))
+            .where(
+                or_(
+                    Commit.message == reverted_subject,
+                    Commit.message.like(f"{escaped_subject}\n%", escape="\\"),
+                    Commit.message.like(f"{escaped_subject}\r\n%", escape="\\")
+                )
+            )
             .where(Commit.authored_date < before_date))
     if repo_id:
         stmt = stmt.where(Commit.repo_id == repo_id)

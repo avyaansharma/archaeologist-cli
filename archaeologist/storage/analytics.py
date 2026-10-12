@@ -1,15 +1,16 @@
 import json
 from collections import Counter, defaultdict
-from typing import List, Dict, Any, Optional
-from sqlmodel import select
+from typing import Any
+
 from sqlalchemy import func
+from sqlmodel import select
 
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import Commit, SymbolIndex
 from archaeologist.utils.security import escape_like
 
 
-def _get_json_list(value: Any) -> List[str]:
+def _get_json_list(value: Any) -> list[str]:
     """Safely deserializes JSON list fields stored in SQLite."""
     if not value:
         return []
@@ -21,7 +22,7 @@ def _get_json_list(value: Any) -> List[str]:
     return value
 
 
-def _apply_repo_id_filter(query, model_col, repo_id: Optional[str]):
+def _apply_repo_id_filter(query, model_col, repo_id: str | None):
     if not repo_id:
         return query
     clean = repo_id.strip()
@@ -40,7 +41,7 @@ def _apply_repo_id_filter(query, model_col, repo_id: Optional[str]):
     )
 
 
-def repo_hotspots_tool(top_n: int = 15, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def repo_hotspots_tool(top_n: int = 15, repo_id: str | None = None) -> list[dict[str, Any]]:
     """Calculates top churn files in the repo ranked by commit count."""
     file_counts = Counter()
     with get_session_context() as session:
@@ -51,14 +52,14 @@ def repo_hotspots_tool(top_n: int = 15, repo_id: Optional[str] = None) -> List[D
             files = _get_json_list(files_changed)
             for f in files:
                 file_counts[f] += 1
-    
+
     hotspots = []
     for fpath, count in file_counts.most_common(top_n):
         hotspots.append({"file_path": fpath, "commit_count": count})
     return hotspots
 
 
-def repo_ownership_tool(file_path: Optional[str] = None, repo_id: Optional[str] = None) -> Dict[str, Any]:
+def repo_ownership_tool(file_path: str | None = None, repo_id: str | None = None) -> dict[str, Any]:
     """Calculates author percentage contribution distribution and bus factor risk."""
     author_counts = Counter()
     file_author_counts = defaultdict(Counter)
@@ -127,7 +128,7 @@ def repo_ownership_tool(file_path: Optional[str] = None, repo_id: Optional[str] 
     return res
 
 
-def change_coupling_tool(min_co_commits: int = 2, top_n: int = 15, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def change_coupling_tool(min_co_commits: int = 2, top_n: int = 15, repo_id: str | None = None) -> list[dict[str, Any]]:
     """Identifies pairs of files that frequently change together in the same commit."""
     pair_counts = Counter()
     with get_session_context() as session:
@@ -135,7 +136,7 @@ def change_coupling_tool(min_co_commits: int = 2, top_n: int = 15, repo_id: Opti
         query = _apply_repo_id_filter(query, Commit.repo_id, repo_id)
         results = session.exec(query).all()
         for files_changed in results:
-            files = sorted(list(set(_get_json_list(files_changed))))
+            files = sorted(set(_get_json_list(files_changed)))
             if len(files) > 25 or len(files) < 2:
                 continue
             for i in range(len(files)):
@@ -153,7 +154,7 @@ def change_coupling_tool(min_co_commits: int = 2, top_n: int = 15, repo_id: Opti
     return couplings
 
 
-def repo_symbols_tool(top_n: int = 20, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def repo_symbols_tool(top_n: int = 20, repo_id: str | None = None) -> list[dict[str, Any]]:
     """Lists extracted AST code symbols (classes, functions, methods) ranked by modification frequency."""
     with get_session_context() as session:
         query = select(SymbolIndex).order_by(SymbolIndex.commit_count.desc())
@@ -171,7 +172,7 @@ def repo_symbols_tool(top_n: int = 20, repo_id: Optional[str] = None) -> List[Di
         ]
 
 
-def symbol_history_tool(symbol_query: str, repo_id: Optional[str] = None, fuzzy: bool = False) -> List[Dict[str, Any]]:
+def symbol_history_tool(symbol_query: str, repo_id: str | None = None, fuzzy: bool = False) -> list[dict[str, Any]]:
     """Retrieves all commits that modified a specific AST Code Symbol (e.g. 'AuthService' or 'login')."""
     matching_commits = []
     with get_session_context() as session:
@@ -185,7 +186,7 @@ def symbol_history_tool(symbol_query: str, repo_id: Optional[str] = None, fuzzy:
             Commit.files_changed
         ).where(Commit.symbols_modified.like(f"%{escaped_query}%", escape="\\"))
         query = _apply_repo_id_filter(query, Commit.repo_id, repo_id)
-            
+
         commits = session.exec(query).all()
         sq_lower = symbol_query.lower()
         for sha, author, date, message, syms_raw, files_raw in commits:

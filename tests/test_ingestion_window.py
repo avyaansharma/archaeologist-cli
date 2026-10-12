@@ -1,12 +1,14 @@
-import pytest
 from datetime import datetime, timedelta
-from archaeologist.storage.paths import calculate_window_since
+
+import pytest
+
 from archaeologist.ingestion.git_parser import iter_commits
+from archaeologist.storage.paths import calculate_window_since
 
 
 def test_calculate_window_since_exact_cutoffs():
     now = datetime.now()
-    
+
     # 6 months (182 days)
     w_6m = calculate_window_since("6m")
     assert w_6m == (now - timedelta(days=182)).strftime("%Y-%m-%d")

@@ -1,12 +1,12 @@
-import sys
-import pytest
 from datetime import datetime
-from archaeologist.ingestion.symbol_parser import FUNCTION_REGEX, extract_modified_line_numbers_from_diff
+
 from archaeologist.ingestion.link_resolver import SHA_REF
 from archaeologist.ingestion.revert_detector import _escape_like
-from archaeologist.utils.security import SHA_REGEX
+from archaeologist.ingestion.symbol_parser import FUNCTION_REGEX, extract_modified_line_numbers_from_diff
 from archaeologist.retrieval.embedder import Embedder
 from archaeologist.retrieval.vector_store import VectorStore
+from archaeologist.utils.security import SHA_REGEX
+
 
 def test_sha_ref_ignores_pure_decimal_numbers():
     text = "Fixed in build 20240115, ticket 9876543, commit abc12345"
@@ -19,7 +19,7 @@ def test_function_regex_requires_explicit_keywords():
     call_line = "    doSomethingRandom(x, y);"
     def_line = "def my_python_func(a, b):"
     js_func = "function myJsFunc(x) {"
-    
+
     assert FUNCTION_REGEX.match(call_line) is None
     assert FUNCTION_REGEX.match(def_line) is not None
     assert FUNCTION_REGEX.match(def_line).group(1) == "my_python_func"
@@ -87,10 +87,12 @@ def test_vector_store_fallback_flag():
     store.close()
 
 def test_update_cross_links_accepts_orm_session():
-    from sqlmodel import create_engine, Session, SQLModel
-    from archaeologist.ingestion.link_resolver import update_cross_links
-    from archaeologist.storage.models import PullRequest, Issue
     from datetime import datetime
+
+    from sqlmodel import Session, SQLModel, create_engine
+
+    from archaeologist.ingestion.link_resolver import update_cross_links
+    from archaeologist.storage.models import Issue, PullRequest
 
     test_engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(test_engine)
@@ -116,7 +118,7 @@ def test_update_cross_links_accepts_orm_session():
 
 def test_increment_retry_preserves_sub_question_index():
     from archaeologist.agent.graph import increment_retry_node
-    
+
     state = {
         "retry_count": 0,
         "current_sub_question_index": 3,
@@ -164,7 +166,7 @@ def test_chunk_commit_squash_merge_bullets():
 
 def test_plan_node_unverified_claims_prompt(monkeypatch):
     from archaeologist.agent.nodes.plan import plan_node
-    
+
     state = {
         "question": "How does auth work?",
         "sub_questions": ["How does auth work?"],
@@ -172,7 +174,7 @@ def test_plan_node_unverified_claims_prompt(monkeypatch):
         "retry_count": 1,
         "unverified_claims": ["Auth uses JWT tokens."]
     }
-    
+
     # Verify plan_node handles retry state with unverified claims without error
     res = plan_node(state)
     assert "search_queries" in res

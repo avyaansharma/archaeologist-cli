@@ -1,15 +1,14 @@
-import os
-import pytest
-from datetime import datetime, timezone
-from sqlmodel import select
+from datetime import UTC, datetime
 
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import Commit, SymbolIndex
-from archaeologist.ingestion.revert_detector import find_reverted_commit, detect_revert_from_message
+import pytest
+
 from archaeologist.ingestion.git_parser import _normalize_numstat_path
-from archaeologist.storage.paths import get_default_db_path
+from archaeologist.ingestion.revert_detector import find_reverted_commit
 from archaeologist.mcp_server.tools import repo_hotspots_tool, repo_ownership_tool
-from archaeologist.retrieval.bm25_index import tokenize_text, BM25Index
+from archaeologist.retrieval.bm25_index import BM25Index, tokenize_text
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Commit
+from archaeologist.storage.paths import get_default_db_path
 
 
 @pytest.fixture
@@ -25,10 +24,10 @@ def test_revert_detector_prevents_cross_repo_causal_corruption(clean_db):
     When repo A and repo B both have a commit with the subject 'Fix bug',
     a revert in repo B must NOT link to the commit in repo A.
     """
-    now = datetime.now(timezone.utc)
-    t1 = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    t2 = datetime(2025, 2, 1, tzinfo=timezone.utc)
-    t3 = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    datetime.now(UTC)
+    t1 = datetime(2025, 1, 1, tzinfo=UTC)
+    t2 = datetime(2025, 2, 1, tzinfo=UTC)
+    t3 = datetime(2025, 3, 1, tzinfo=UTC)
 
     with get_session_context() as session:
         # Commit in Repo A (older)
@@ -108,7 +107,7 @@ def test_analytical_tools_support_repo_basename_matching(clean_db):
     """Bug 5: Ingested commits have repo_id='pallets/flask', but CLI/user passes 'flask'.
     Analytical tools should match the repo basename instead of returning empty results.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session_context() as session:
         session.add(Commit(
             sha="commit_flask_1",
@@ -134,7 +133,7 @@ def test_bm25_tokenize_text_handles_none_gracefully():
     """Bug 6: tokenize_text raised AttributeError if passed None or non-string."""
     assert tokenize_text(None) == []
     assert tokenize_text("") == []
-    
+
     idx = BM25Index()
     # Should not raise AttributeError when searching with None or empty
     assert idx.search(None) == []

@@ -1,6 +1,7 @@
 import sys
+
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
+from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 DECOMPOSE_PROMPT = """You are a codebase archaeologist assistant.
 Decompose the following causal 'why' question about a software repository into 1-3 specific, searchable sub-questions.

@@ -1,51 +1,59 @@
 import os
-import sys
 import re
 import subprocess
+import sys
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, List, Callable, Any, Dict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlmodel import select, delete
+from typing import Any
 
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
-from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex
-from archaeologist.ingestion.git_parser import iter_commits, count_commits, get_commit_diff, is_merge_commit
-from archaeologist.ingestion.revert_detector import (
-    detect_revert_from_message,
-    find_reverted_commit,
-    extract_revert_sha_from_message,
-    find_reverted_commit_by_sha
+from sqlmodel import delete, select
+
+from archaeologist.ingestion.chunker import (
+    chunk_codebase,
+    chunk_commit,
+    chunk_issue,
+    chunk_pr,
+    make_deterministic_chunk_id,
+    token_count,
 )
+from archaeologist.ingestion.diff_summarizer import LLMSummarizer
+from archaeologist.ingestion.git_parser import count_commits, get_commit_diff, iter_commits
 from archaeologist.ingestion.github_client import GitHubIngestionClient
 from archaeologist.ingestion.link_resolver import update_cross_links
-from archaeologist.ingestion.chunker import chunk_commit, chunk_issue, chunk_pr, chunk_codebase, make_deterministic_chunk_id, token_count
+from archaeologist.ingestion.revert_detector import (
+    detect_revert_from_message,
+    extract_revert_sha_from_message,
+    find_reverted_commit,
+    find_reverted_commit_by_sha,
+)
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Chunk, Commit, Issue, PullRequest, SymbolIndex
+from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
 
-from archaeologist.ingestion.diff_summarizer import LLMSummarizer
 _ORIGINAL_SUMMARIZE_DIFF_BATCH = LLMSummarizer.summarize_diff_batch
 
 from archaeologist.ingestion.symbol_parser import (
-    extract_symbols_from_code,
-    map_lines_to_symbols,
     extract_modified_line_numbers_from_diff,
-    resolve_file_path,
-    get_git_file_content
+    extract_symbols_from_code,
+    get_git_file_content,
+    map_lines_to_symbols,
 )
+from archaeologist.retrieval.bm25_index import BM25Index
 from archaeologist.retrieval.embedder import Embedder
 from archaeologist.retrieval.vector_store import VectorStore
-from archaeologist.retrieval.bm25_index import BM25Index
+
 
 class IngestionPipeline:
     def __init__(
         self,
         repo_path: str,
-        repo_url: Optional[str] = None,
-        since_date: Optional[str] = None,
+        repo_url: str | None = None,
+        since_date: str | None = None,
         github_limit: int = 500,
-        repo_id: Optional[str] = None,
-        progress_callback: Optional[Callable[[str, int, int, str, float], None]] = None,
-        github_token: Optional[str] = None,
-        gemini_key: Optional[str] = None,
+        repo_id: str | None = None,
+        progress_callback: Callable[[str, int, int, str, float], None] | None = None,
+        github_token: str | None = None,
+        gemini_key: str | None = None,
         reembed: bool = False,
         enable_llm_summaries: bool = False
     ):
@@ -77,14 +85,19 @@ class IngestionPipeline:
             print(f"[{bounded_pct:3.0f}%] {message}", file=sys.stderr)
 
     def run(self):
-        from archaeologist.storage.paths import get_default_db_url, get_default_bm25_path, get_default_qdrant_path
-        from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
+        from archaeologist.storage.context import (
+            current_bm25_path_var,
+            current_db_url_var,
+            current_qdrant_path_var,
+            current_repo_path_var,
+        )
+        from archaeologist.storage.paths import get_default_db_url
         repo_db_url = get_default_db_url(self.repo_path)
         current_db_url_var.set(repo_db_url)
         current_bm25_path_var.set(get_default_bm25_path(self.repo_path))
         current_qdrant_path_var.set(get_default_qdrant_path(self.repo_path))
         current_repo_path_var.set(str(self.repo_path))
-        
+
         if self.repo_url and not self.github_token and not os.getenv("GITHUB_TOKEN"):
             self._report_progress("init", 0, 100, "💡 Tip: GITHUB_TOKEN not set. Remote GitHub PR/Issue rate limits will apply.", 2.5)
 
@@ -107,31 +120,31 @@ class IngestionPipeline:
         total_commits = count_commits(self.repo_path, since=self.since_date)
         if total_commits == 0:
             total_commits = 1
-            
+
         self._report_progress("commits", 0, total_commits, f"Scanning {total_commits} commits...", 6.0)
         new_commits_count = 0
-        
+
         with get_session_context() as session:
             query = select(Commit.sha)
             if self.repo_id:
                 query = query.where(Commit.repo_id == self.repo_id)
             existing_shas = set(session.exec(query).all())
-            
+
             # D21: Pre-load existing symbols for repo to avoid O(N) database gets per commit
             sym_stmt = select(SymbolIndex)
             if self.repo_id:
                 sym_stmt = sym_stmt.where(SymbolIndex.repo_id == self.repo_id)
-            symbol_cache: Dict[str, SymbolIndex] = {s.symbol_id: s for s in session.exec(sym_stmt).all()}
+            symbol_cache: dict[str, SymbolIndex] = {s.symbol_id: s for s in session.exec(sym_stmt).all()}
 
             c_idx = 0
             for c_data in iter_commits(self.repo_path, since=self.since_date):
                 c_idx += 1
                 if c_data["sha"] in existing_shas:
                     continue
-                    
+
                 reverted_subject = detect_revert_from_message(c_data["message"])
                 is_revert = bool(reverted_subject)
-                
+
                 # AST Symbol Extraction Pass at Historical Commit SHA
                 symbols_modified = []
                 diff_text = get_commit_diff(self.repo_path, c_data["sha"])
@@ -171,7 +184,7 @@ class IngestionPipeline:
                                 pre_symbols = extract_symbols_from_code(pre_code_text, fpath)
                                 touched_syms.extend(map_lines_to_symbols(pre_symbols, deleted_lines))
 
-                        unique_touched = sorted(list(set(touched_syms)))
+                        unique_touched = sorted(set(touched_syms))
                         symbols_modified.extend(unique_touched)
 
                         for sym_id in unique_touched:
@@ -189,7 +202,7 @@ class IngestionPipeline:
                     authored_date=c_data["authored_date"],
                     message=c_data["message"],
                     files_changed=c_data["files_changed"],
-                    symbols_modified=sorted(list(set(symbols_modified))),
+                    symbols_modified=sorted(set(symbols_modified)),
                     insertions=c_data["insertions"],
                     deletions=c_data["deletions"],
                     is_revert=is_revert,
@@ -198,7 +211,7 @@ class IngestionPipeline:
                 session.add(commit_obj)
                 existing_shas.add(c_data["sha"])
                 new_commits_count += 1
-                
+
                 # Periodic batch commit every 50 commits to release SQLite write locks
                 if new_commits_count % 50 == 0:
                     session.commit()
@@ -213,7 +226,7 @@ class IngestionPipeline:
                         c_pct
                     )
             session.commit()
-                
+
         self._report_progress("commits", total_commits, total_commits, f"Ingested {new_commits_count} commits into database", 35.0)
 
         # Step 1b: Codebase File Ingestion Pass
@@ -233,11 +246,14 @@ class IngestionPipeline:
             if os.path.exists(git_dir):
                 try:
                     res = subprocess.run(
-                        ["git", "-C", self.repo_path, "ls-files"],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace"
+                        ["git", "-C", self.repo_path, "-c", "core.quotepath=false", "ls-files", "-z"],
+                        capture_output=True
                     )
-                    if res.returncode == 0 and res.stdout.strip():
-                        for line in res.stdout.splitlines():
+                    if res.returncode == 0 and res.stdout:
+                        for raw_b in res.stdout.split(b"\0"):
+                            if not raw_b:
+                                continue
+                            line = raw_b.decode("utf-8", errors="replace")
                             rel_p = line.strip().replace("\\", "/")
                             if rel_p.endswith((".py", ".md", ".json", ".ts", ".js", ".yml", ".yaml")):
                                 if not any(p in ("venv", ".venv", "__pycache__", "node_modules", "dist", "build") for p in rel_p.split("/")):
@@ -260,7 +276,7 @@ class IngestionPipeline:
 
             for abs_fpath, rel_fpath in candidate_files:
                 try:
-                    with open(abs_fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(abs_fpath, encoding="utf-8", errors="ignore") as f:
                         content = f.read()
                     if content.strip():
                         chunk_id = make_deterministic_chunk_id("file", rel_fpath, 0, content, repo_id=self.repo_id)
@@ -342,8 +358,8 @@ class IngestionPipeline:
                 gh_client = GitHubIngestionClient(self.repo_url, token=self.github_token)
                 prs = gh_client.fetch_pull_requests(limit=self.github_limit, direction="desc", since=since_dt)
                 issues = gh_client.fetch_issues(limit=self.github_limit, direction="desc", since=since_dt)
-                
-                def _parse_iso_dt(val: Any) -> Optional[datetime]:
+
+                def _parse_iso_dt(val: Any) -> datetime | None:
                     if not val:
                         return None
                     if isinstance(val, datetime):
@@ -450,7 +466,7 @@ class IngestionPipeline:
 
         # Step 5: Batched Chunking & Structural Patch Footprint Pass
         summarizer = LLMSummarizer()
-        
+
         with get_session_context() as session:
             c_query = select(Commit).order_by(Commit.authored_date.desc())
             pr_query = select(PullRequest)
@@ -459,16 +475,19 @@ class IngestionPipeline:
                 pr_query = pr_query.where(PullRequest.repo_id == self.repo_id)
             all_commits = session.exec(c_query).all()
             all_prs = session.exec(pr_query).all()
-            
+
             pr_by_commit = {}
             pr_map = {p.number: p for p in all_prs}
             for p in all_prs:
                 if p.merge_commit_sha:
                     pr_by_commit[p.merge_commit_sha] = p.number
-                for sha in p.linked_commit_shas:
-                    pr_by_commit[sha] = p.number
+                for sha in (p.linked_commit_shas or []):
+                    clean_sha = sha.strip() if isinstance(sha, str) else ""
+                    if not clean_sha or len(clean_sha) < 7:
+                        continue
+                    pr_by_commit[clean_sha] = p.number
                     for c in all_commits:
-                        if c.sha.startswith(sha):
+                        if c.sha.startswith(clean_sha):
                             pr_by_commit[c.sha] = p.number
 
             diff_summaries = {}
@@ -544,7 +563,7 @@ class IngestionPipeline:
                     related.append(f"pr#{pr_num}")
                     linked_pr_obj = pr_map.get(pr_num)
                 # Auto-link PR from commit message pattern like (#123) or Merge pull request #123
-                pr_matches = re.findall(r'#(\d+)', c.message or "")
+                pr_matches = re.findall(r'(?:(?:pull\s*request|PR|fixes|closes)\s*#?|\(#)(\d+)', c.message or "", re.IGNORECASE)
                 for pm in pr_matches:
                     rel_pr = f"pr#{pm}"
                     if rel_pr not in related:
@@ -568,7 +587,7 @@ class IngestionPipeline:
                         pr_body = (linked_pr_obj.body or "").strip().replace("\r\n", " ")
                         pr_body_snip = f" - {pr_body[:200]}..." if pr_body else ""
                         footprint_parts.append(f"Linked PR #{linked_pr_obj.number}: \"{linked_pr_obj.title}\"{pr_body_snip}")
-                    
+
                     summary = "\n".join(footprint_parts) if footprint_parts else f"Commit {c.sha[:7]} (+{c.insertions}/-{c.deletions} lines)"
                     c.diff_summary = summary
                     session.add(c)
@@ -716,19 +735,19 @@ class IngestionPipeline:
         total_unembedded = len(unembedded_dicts)
         if total_unembedded > 0:
             self._report_progress("embeddings", 0, total_unembedded, f"Generating embeddings for {total_unembedded} chunks...", 83.0)
-            
+
             total_embedded_count = 0
             batch_size = 100
-            
+
             for b_idx in range(0, total_unembedded, batch_size):
                 b_chunk_dicts = unembedded_dicts[b_idx:b_idx + batch_size]
                 b_texts = [c["text"] for c in b_chunk_dicts]
                 b_embeddings, b_success = embedder.embed_texts(b_texts, return_success_flags=True)
-                
+
                 if b_embeddings:
                     succ_dicts = [d for d, s in zip(b_chunk_dicts, b_success) if s]
                     succ_embs = [e for e, s in zip(b_embeddings, b_success) if s]
-                    
+
                     if succ_dicts:
                         vector_store.upsert_chunks(succ_dicts, succ_embs)
                         with get_session_context() as session:

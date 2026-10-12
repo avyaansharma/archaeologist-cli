@@ -1,14 +1,14 @@
-import os
 import subprocess
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from sqlmodel import select
 
-from archaeologist.ingestion.pipeline import IngestionPipeline
-from archaeologist.storage.db import get_session_context
-from archaeologist.storage.models import Commit, Chunk, PullRequest
 from archaeologist.agent.nodes.synthesize import synthesize_node
 from archaeologist.agent.state import AgentState
+from archaeologist.ingestion.pipeline import IngestionPipeline
+from archaeologist.storage.db import get_session_context
+from archaeologist.storage.models import Chunk, Commit, PullRequest
+
 
 def test_zero_cost_ingestion_no_llm_calls(golden_repo, monkeypatch):
     """Verifies that default ingestion uses zero LLM calls and populates AST structural footprint."""

@@ -15,7 +15,6 @@ authors = [
 
 dependencies = [
     "anthropic>=0.122.0",
-    "fastapi>=0.141.1",
     "fastembed>=0.8.0",
     "gitpython>=3.1.59",
     "google-genai>=2.18.1",
@@ -30,11 +29,9 @@ dependencies = [
     "qdrant-client>=1.19.0",
     "rank-bm25>=0.2.2",
     "sqlmodel>=0.0.39,<0.0.45",
-    "sse-starlette>=3.4.8",
     "tenacity>=9.1.4",
     "tiktoken>=0.13.0",
     "typer>=0.27.1",
-    "uvicorn>=0.52.3",
 ]
 
 [project.urls]
@@ -47,7 +44,6 @@ arch = "archaeologist.cli:app"
 
 [dependency-groups]
 dev = [
-    "black>=26.5.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.3",
@@ -60,6 +56,37 @@ testpaths = ["tests"]
 [tool.setuptools.packages.find]
 include = ["archaeologist*"]
 
-[tool.setuptools.package-data]
-"archaeologist.web" = ["static/*", "static/**/*"]
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    ".venv",
+    ".git",
+    "scratch",
+    "brag-output",
+]
 
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long
+    "B008",  # do not perform function calls in argument defaults
+    "B904",  # raise from
+    "E402",  # module level import not at top of file
+    "B007",  # loop control variable not used
+    "E712",  # comparison to True/False in SQLAlchemy / SQLModel queries
+    "B905",  # zip without strict=
+    "W293",  # blank line contains whitespace
+]
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["archaeologist"]

@@ -1,15 +1,19 @@
 import pytest
+
 from archaeologist.storage.context import (
-    current_repo_id_var,
-    current_db_url_var,
     current_bm25_path_var,
     current_client_api_key_var,
+    current_db_url_var,
+    current_repo_id_var,
 )
 from archaeologist.storage.db import dispose_all_engines
 
+
 @pytest.fixture(autouse=True)
 def clean_context_and_engines():
-    """Autouse fixture ensuring ContextVars and database engines do not leak across tests."""
+    """Autouse fixture ensuring ContextVars, database engines, and os.environ do not leak across tests."""
+    import os
+    env_snapshot = os.environ.copy()
     t1 = current_repo_id_var.set(None)
     t2 = current_db_url_var.set(None)
     t3 = current_bm25_path_var.set(None)
@@ -20,6 +24,17 @@ def clean_context_and_engines():
     current_bm25_path_var.reset(t3)
     current_client_api_key_var.reset(t4)
     dispose_all_engines()
+    os.environ.clear()
+    os.environ.update(env_snapshot)
+
+
+def assert_path_within(target_path, parent_dir):
+    """Assertion helper verifying resolved storage path stays strictly within expected directory."""
+    from pathlib import Path
+    t = Path(target_path).resolve()
+    p = Path(parent_dir).resolve()
+    assert p in t.parents or t == p, f"Path {t} escaped expected directory {p}!"
+
 
 
 @pytest.fixture

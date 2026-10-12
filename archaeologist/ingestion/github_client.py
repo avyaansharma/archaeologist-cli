@@ -1,15 +1,16 @@
 import os
-import sys
 import re
+import sys
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from github import Github, Auth
+from typing import Any
+
 from dotenv import load_dotenv
+from github import Auth, Github
 
 load_dotenv()
 
 class GitHubIngestionClient:
-    def __init__(self, repo_url: str, token: Optional[str] = None):
+    def __init__(self, repo_url: str, token: str | None = None):
         self.token = token or os.getenv("GITHUB_TOKEN")
         if self.token:
             try:
@@ -19,12 +20,12 @@ class GitHubIngestionClient:
                 self.gh = Github(self.token, timeout=10, retry=0)
         else:
             self.gh = Github(timeout=10, retry=0)
-        
+
         clean_url = repo_url.rstrip("/").removesuffix(".git")
         match = re.search(r'github\.com/([^/]+)/([^/]+)', clean_url)
         if not match:
             raise ValueError(f"Invalid GitHub URL: '{repo_url}'")
-            
+
         self.owner = match.group(1)
         self.repo_name = match.group(2)
         try:
@@ -57,8 +58,8 @@ class GitHubIngestionClient:
         limit: int = 500,
         sort: str = "updated",
         direction: str = "desc",
-        since: Optional[Any] = None
-    ) -> List[Dict[str, Any]]:
+        since: Any | None = None
+    ) -> list[dict[str, Any]]:
         """Fetches PRs sorted by updated (descending) with genuine inline review comments & issue comments."""
         if not self.repo:
             return []
@@ -78,7 +79,7 @@ class GitHubIngestionClient:
             for pr in prs:
                 if count >= limit:
                     break
-                
+
                 if since and pr.updated_at:
                     pr_up = pr.updated_at.replace(tzinfo=None) if hasattr(pr.updated_at, 'tzinfo') and pr.updated_at.tzinfo else pr.updated_at
                     since_cmp = since.replace(tzinfo=None) if hasattr(since, 'tzinfo') and since.tzinfo else since
@@ -88,7 +89,7 @@ class GitHubIngestionClient:
                 body_text = pr.body or ""
                 linked_issues = [int(n) for n in re.findall(r'(?:fixes|resolves|closes|refs)\s+#(\d+)', body_text, re.IGNORECASE)]
 
-                
+
                 # 1. Issue-level discussion comments
                 comments = []
                 if not skip_comments:
@@ -148,8 +149,8 @@ class GitHubIngestionClient:
         limit: int = 500,
         sort: str = "updated",
         direction: str = "desc",
-        since: Optional[Any] = None
-    ) -> List[Dict[str, Any]]:
+        since: Any | None = None
+    ) -> list[dict[str, Any]]:
         """Fetches issues (direction='desc' by default) with comments, labels, and linked PRs."""
         if not self.repo:
             return []
@@ -208,7 +209,7 @@ class GitHubIngestionClient:
                     "author": issue.user.login if issue.user else "unknown",
                     "created_at": issue.created_at,
                     "closed_at": issue.closed_at,
-                    "labels": [l.name for l in issue.labels],
+                    "labels": [lbl.name for lbl in issue.labels],
                     "comments": comments,
                     "linked_pr_numbers": linked_prs,
                 })

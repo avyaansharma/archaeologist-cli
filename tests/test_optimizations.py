@@ -1,12 +1,12 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from sqlmodel import select, SQLModel
 
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import Chunk, Commit, PullRequest
-from archaeologist.agent.nodes.search import search_node
+import pytest
+
 from archaeologist.agent.nodes.follow_links import follow_links_node
+from archaeologist.agent.nodes.search import search_node
 from archaeologist.mcp_server.tools import find_related_discussion_tool
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Chunk, Commit, PullRequest
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +37,7 @@ def test_dense_search_mock_vector_bypass():
     with patch("archaeologist.agent.nodes.search._get_embedder", return_value=mock_embedder), \
          patch("archaeologist.agent.nodes.search._get_vector_store", return_value=mock_vector_store), \
          patch("archaeologist.agent.nodes.search.BM25Index"):
-        
+
         result = search_node(state)
 
         # Confirm vector_store.search_chunks was NOT called because success_flags[0] is False

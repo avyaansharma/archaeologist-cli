@@ -1,6 +1,5 @@
-import os
 import json
-from typing import List, Optional
+import os
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -11,15 +10,15 @@ except ImportError:
         from mcp.server import MCPServer as FastMCP
 
 from archaeologist.mcp_server.tools import (
-    search_history_tool,
-    find_related_discussion_tool,
+    ask_tool,
     blame_explain_tool,
+    change_coupling_tool,
+    find_related_discussion_tool,
     repo_hotspots_tool,
     repo_ownership_tool,
-    change_coupling_tool,
     repo_symbols_tool,
+    search_history_tool,
     symbol_history_tool,
-    ask_tool
 )
 
 # Initialize FastMCP Server
@@ -27,8 +26,8 @@ mcp = FastMCP("Codebase Archaeologist")
 
 def _get_mcp_repo_context():
     """Resolves repo_path and repo_id for MCP tools."""
-    from archaeologist.storage.paths import resolve_repo_id, get_stored_repo_id
     from archaeologist.cli import _configure_repo_env
+    from archaeologist.storage.paths import get_stored_repo_id, resolve_repo_id
     raw_root = os.getenv("ARCHAEOLOGIST_REPO") or os.getenv("GIT_DETECTIVE_REPO") or "."
     abs_root = os.path.abspath(raw_root)
     rid = _configure_repo_env(repo_path=abs_root) or get_stored_repo_id(abs_root) or resolve_repo_id(abs_root)
@@ -37,10 +36,10 @@ def _get_mcp_repo_context():
 @mcp.tool()
 def search_history(
     query: str,
-    file_path: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    source_types: Optional[List[str]] = None
+    file_path: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    source_types: list[str] | None = None
 ) -> str:
     """Hybrid search over commit/PR/issue history for the repository.
     
@@ -70,7 +69,7 @@ def blame_explain(
     file_path: str,
     line_start: int,
     line_end: int,
-    repo_path: Optional[str] = None
+    repo_path: str | None = None
 ) -> str:
     """Traces line history using git blame and returns causal explanations of those lines.
     
@@ -120,7 +119,7 @@ def repo_hotspots(top_n: int = 15) -> str:
     return json.dumps(results, indent=2, default=str)
 
 @mcp.tool()
-def repo_ownership(file_path: Optional[str] = None) -> str:
+def repo_ownership(file_path: str | None = None) -> str:
     """Analyzes author contribution distribution per file to determine ownership and bus factor risk.
     
     Arguments:

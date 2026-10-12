@@ -7,6 +7,7 @@ import os
 import pickle
 import subprocess
 from datetime import datetime
+
 import pytest
 
 
@@ -98,18 +99,20 @@ def test_d5_request_context_beats_process_env(monkeypatch):
 
 # D5: a keyed request followed by an unkeyed one must not destroy the server key
 def test_d5_server_key_survives_keyed_then_unkeyed_request(tmp_path, monkeypatch):
+    from archaeologist.storage.context import current_client_api_key_var
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'x.db'}")
     monkeypatch.setenv("BM25_INDEX_PATH", str(tmp_path / "bm25.bin"))
     monkeypatch.setenv("GEMINI_API_KEY", "server-key")
-    from archaeologist.web import server
-    monkeypatch.setattr(server, "_CLIENT_OVERRIDE_KEY", None, raising=False)
 
     def two_requests():
-        server._activate_repo_environment("local-repo", client_api_key="client-key")
-        server._activate_repo_environment("local-repo", client_api_key=None)
+        t = current_client_api_key_var.set("client-key")
+        assert current_client_api_key_var.get() == "client-key"
+        current_client_api_key_var.reset(t)
+        assert current_client_api_key_var.get() is None
 
     contextvars.copy_context().run(two_requests)
     assert os.environ.get("GEMINI_API_KEY") == "server-key"
+
 
 
 # D6: a generic DATABASE_URL in the shell must not be adopted
@@ -145,8 +148,9 @@ def test_d8_bm25_accepts_utc_suffixed_dates():
 
 # D9: importing the models must not replace SQLAlchemy's Session.get
 def test_d9_session_get_is_not_patched():
-    import archaeologist.storage.models  # noqa: F401
     from sqlalchemy.orm import Session
+
+    import archaeologist.storage.models  # noqa: F401
 
     assert Session.get.__module__.startswith("sqlalchemy")
 

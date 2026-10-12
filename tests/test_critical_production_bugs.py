@@ -1,17 +1,12 @@
 import os
-import sys
 import time
-import tempfile
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
+from archaeologist.agent.graph import increment_retry_node
+from archaeologist.retrieval.bm25_index import BM25Index
 from archaeologist.retrieval.vector_store import VectorStore
-from archaeologist.retrieval.bm25_index import BM25Index, _BM25_CACHE
-from archaeologist.agent.graph import increment_retry_node, agent_graph
-from archaeologist.agent.state import AgentState
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import Commit, Chunk
+from archaeologist.storage.db import get_session_context, init_db
 
 
 def test_reproduce_qdrant_local_concurrent_access_lock_collision(tmp_path):
@@ -44,7 +39,7 @@ def test_reproduce_bm25_cache_stale_data_on_disk_update(tmp_path):
     warm processes will serve stale search results.
     """
     idx_path = str(tmp_path / "bm25_test.bin")
-    
+
     # 1. Fit index with initial multi-doc corpus so BM25 IDF scores are strictly positive
     idx1 = BM25Index()
     idx1.fit([
@@ -78,7 +73,7 @@ def test_reproduce_bm25_cache_stale_data_on_disk_update(tmp_path):
     loader2 = BM25Index()
     loader2.load(idx_path)
     res2 = loader2.search("beta")
-    
+
     assert len(res2) == 1, "Stale cache bug: BM25Index.load() returned stale data because it did not check file mtime!"
     assert res2[0]["chunk"]["id"] == "c2"
 
@@ -103,7 +98,7 @@ def test_reproduce_agent_retry_resets_completed_sub_questions():
     }
 
     new_state = increment_retry_node(state)
-    
+
     # In buggy code, current_sub_question_index is reset to 0
     # In hardened code, previously completed subquestions must NOT be re-executed from scratch!
     assert new_state["retry_count"] == 1
@@ -119,7 +114,7 @@ def test_reproduce_pipeline_unbatched_sqlite_lock_contention(tmp_path, monkeypat
     It must commit in periodic batches to release locks and allow concurrent reads.
     """
     from archaeologist.ingestion.pipeline import IngestionPipeline
-    
+
     db_file = tmp_path / "test_pipeline_batch.db"
     db_url = f"sqlite:///{db_file.as_posix()}"
     init_db(db_url)
@@ -127,7 +122,7 @@ def test_reproduce_pipeline_unbatched_sqlite_lock_contention(tmp_path, monkeypat
 
     # Mock git commits (150 commits)
     mock_commits = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for i in range(150):
         mock_commits.append({
             "sha": f"{i:040x}",
@@ -141,10 +136,10 @@ def test_reproduce_pipeline_unbatched_sqlite_lock_contention(tmp_path, monkeypat
         })
 
     pipeline = IngestionPipeline(repo_path=str(tmp_path), repo_id="test_repo")
-    
+
     commit_calls = []
     real_get_session_context = get_session_context
-    
+
     from contextlib import contextmanager
     @contextmanager
     def spy_session():
@@ -162,9 +157,9 @@ def test_reproduce_pipeline_unbatched_sqlite_lock_contention(tmp_path, monkeypat
     monkeypatch.setattr("archaeologist.ingestion.pipeline.get_commit_diff", lambda *args, **kwargs: "")
     # Stop pipeline after commit phase to test batching
     monkeypatch.setattr("archaeologist.ingestion.pipeline.IngestionPipeline._report_progress", lambda *args, **kwargs: None)
-    
+
     # Just run the commit ingestion logic
-    with get_session_context() as session:
+    with get_session_context():
         pass  # Just ensure DB is warm
 
     # Run the ingestion pipeline (mocking other steps)

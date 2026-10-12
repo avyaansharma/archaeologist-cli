@@ -1,10 +1,11 @@
 import os
 import sys
+
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
+from archaeologist.ingestion.git_parser import get_commit_diff
 from archaeologist.storage.context import current_repo_path_var
 from archaeologist.storage.paths import find_repo_root
-from archaeologist.ingestion.git_parser import get_commit_diff
+from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 SYNTHESIZE_PROMPT = """You are Codebase Archaeologist, an expert AI assistant that mines git commit history, pull requests, issues, and reverts to answer causal questions about code ("why does this exist", "what broke last time this was touched").
 
@@ -35,7 +36,7 @@ Causal Archaeology Answer:"""
 def _format_offline_evidence(question: str, retrieved: list) -> str:
     """Format retrieved evidence into a structured markdown report for offline runs."""
     lines = [
-        f"### Forensic Archaeology Summary (Offline Mode)",
+        "### Forensic Archaeology Summary (Offline Mode)",
         f"**Question**: {question}\n",
         "*(LLM synthesis unavailable without Gemini API key. Displaying top retrieved historical evidence below)*\n",
         "| Source | ID | Details |",
@@ -48,7 +49,7 @@ def _format_offline_evidence(question: str, retrieved: list) -> str:
         rel = c.get("related_ids", [])
         rel_str = f" (linked: {', '.join(rel)})" if rel else ""
         lines.append(f"| `{stype}` | `{sid}` | {text_preview}...{rel_str} |")
-    
+
     return "\n".join(lines)
 
 
@@ -57,12 +58,12 @@ def synthesize_node(state: AgentState) -> dict:
     draft = state.get("draft_answer", "")
     retrieved = state.get("retrieved_chunks", [])
     unverified = state.get("unverified_claims", [])
-    
+
     print(f"Agent: Synthesizing final answer using Gemini ({DEFAULT_MODEL})...", file=sys.stderr)
 
     api_key = get_gemini_api_key()
     if not api_key:
-        if draft and not draft.startswith("Draft generation failed"):
+        if draft and not draft.startswith("Draft generation failed") and "No Gemini API key available" not in draft:
             return {"response": draft}
         return {"response": _format_offline_evidence(question, retrieved)}
 
@@ -73,13 +74,14 @@ def synthesize_node(state: AgentState) -> dict:
         diffs_fetched = 0
         seen_commit_shas = set()
 
-        for c in retrieved[:50]:
+        for c in retrieved:
             stype = c.get("source_type", "commit")
             sid = c.get("source_id", "")
             rel_ids = c.get("related_ids", [])
             rel_str = f" | Linked PRs/Issues: {rel_ids}" if rel_ids else ""
-            chunk_entry = f"Source: {stype} ({sid}){rel_str}\nText: {c.get('text', '')}"
-            
+            raw_c_text = str(c.get('text', '') or "").replace("</evidence>", "&lt;/evidence&gt;").replace("<evidence>", "&lt;evidence&gt;")
+            chunk_entry = f"Source: {stype} ({sid}){rel_str}\nText: {raw_c_text}"
+
             # JIT diff expansion for top candidate commits
             if stype == "commit" and sid and sid not in seen_commit_shas and diffs_fetched < 5:
                 seen_commit_shas.add(sid)
@@ -87,7 +89,8 @@ def synthesize_node(state: AgentState) -> dict:
                     try:
                         raw_diff = get_commit_diff(repo_path, sid, max_bytes=2500)
                         if raw_diff and raw_diff.strip():
-                            chunk_entry += f"\n--- JIT Unified Diff Preview ({sid[:7]}) ---\n{raw_diff.strip()}"
+                            safe_diff = raw_diff.strip().replace("</evidence>", "&lt;/evidence&gt;").replace("<evidence>", "&lt;evidence&gt;")
+                            chunk_entry += f"\n--- JIT Unified Diff Preview ({sid[:7]}) ---\n{safe_diff}"
                             diffs_fetched += 1
                     except Exception:
                         pass
@@ -101,7 +104,7 @@ def synthesize_node(state: AgentState) -> dict:
             unverified_claims=unverified if unverified else "None",
             evidence=evidence_text,
         )
-        
+
         response_text = client.generate_text(
             prompt=prompt,
             model=DEFAULT_MODEL,

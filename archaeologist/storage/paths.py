@@ -1,16 +1,62 @@
+import json
 import os
 import re
-import subprocess
-from pathlib import Path
-from typing import Optional
-
-
-import json
 import sqlite3
+import subprocess
+import tempfile
+from pathlib import Path
 
-def find_repo_root(start_path: Optional[str] = None) -> Path:
+
+def find_repo_root(start_path: str | None = None) -> Path:
     """Finds the git repository root or returns current working directory."""
-    current = Path(start_path or os.getcwd()).resolve()
+    iso = os.environ.get("ARCHAEOLOGIST_ISOLATION_ROOT")
+    temp_dir = Path(tempfile.gettempdir()).resolve()
+
+    def _is_within_boundary(p: Path, boundary: Path | None) -> bool:
+        if not boundary:
+            return True
+        return p == boundary or boundary in p.parents
+
+    if start_path:
+        current = Path(start_path).resolve()
+        if current.is_file():
+            current = current.parent
+        boundary = Path(iso).resolve() if iso else (temp_dir if temp_dir in current.parents or current == temp_dir else None)
+
+        for parent in [current] + list(current.parents):
+            if boundary and not _is_within_boundary(parent, boundary):
+                break
+            if (parent / ".git").exists():
+                return parent
+
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(current), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                top = Path(proc.stdout.strip()).resolve()
+                if _is_within_boundary(top, boundary) and (top == current or top in current.parents):
+                    return top
+        except Exception:
+            pass
+        return current
+
+    if iso:
+        return Path(iso).resolve()
+
+    current = Path(os.getcwd()).resolve()
+    boundary = temp_dir if temp_dir in current.parents or current == temp_dir else None
+
+    for parent in [current] + list(current.parents):
+        if boundary and not _is_within_boundary(parent, boundary):
+            break
+        if (parent / ".git").exists():
+            return parent
+
     try:
         proc = subprocess.run(
             ["git", "-C", str(current), "rev-parse", "--show-toplevel"],
@@ -20,18 +66,19 @@ def find_repo_root(start_path: Optional[str] = None) -> Path:
             check=False,
         )
         if proc.returncode == 0 and proc.stdout.strip():
-            return Path(proc.stdout.strip()).resolve()
+            top = Path(proc.stdout.strip()).resolve()
+            if _is_within_boundary(top, boundary) and (top == current or top in current.parents):
+                return top
     except Exception:
         pass
-    for parent in [current] + list(current.parents):
-        if (parent / ".git").exists():
-            return parent
     return current
 
 
-def get_archaeologist_dir(repo_path: Optional[str] = None, create: bool = True) -> Path:
+def get_archaeologist_dir(repo_path: str | None = None, create: bool = True) -> Path:
     """Returns the dedicated .archaeologist directory inside the repository."""
     root = find_repo_root(repo_path)
+    if root.is_file():
+        root = root.parent
     arch_dir = root / ".archaeologist"
     if create:
         arch_dir.mkdir(parents=True, exist_ok=True)
@@ -46,11 +93,18 @@ def get_archaeologist_dir(repo_path: Optional[str] = None, create: bool = True) 
 
 get_repo_data_dir = get_archaeologist_dir
 
-from archaeologist.storage.context import current_db_url_var, current_bm25_path_var, current_qdrant_path_var, current_repo_path_var
+from archaeologist.storage.context import (
+    current_bm25_path_var,
+    current_db_url_var,
+    current_qdrant_path_var,
+    current_repo_path_var,
+)
 
-def resolve_repo_id(repo_path: str, repo_url: Optional[str] = None) -> str:
+
+def resolve_repo_id(repo_path: str, repo_url: str | None = None) -> str:
     """Computes canonical repo_id (owner/name or dir name)."""
-    url = repo_url or detect_github_remote(repo_path)
+    base_dir = find_repo_root(repo_path)
+    url = repo_url or detect_github_remote(str(base_dir))
     if url:
         parts = url.rstrip("/").removesuffix(".git").split("/")
         if len(parts) >= 2:
@@ -58,16 +112,16 @@ def resolve_repo_id(repo_path: str, repo_url: Optional[str] = None) -> str:
             return f"{owner}/{name}".lower()
         elif len(parts) == 1:
             return parts[0].lower()
-    return Path(repo_path).resolve().name.lower()
+    return base_dir.name.lower()
 
 
 def save_stored_repo_meta(
     repo_id: str,
-    repo_path: Optional[str] = None,
-    repo_url: Optional[str] = None,
-    embedder_provider: Optional[str] = None,
-    embedder_dimension: Optional[int] = None,
-    last_ingested_at: Optional[str] = None
+    repo_path: str | None = None,
+    repo_url: str | None = None,
+    embedder_provider: str | None = None,
+    embedder_dimension: int | None = None,
+    last_ingested_at: str | None = None
 ) -> None:
     """Stores repository metadata in .archaeologist/meta.json and database repo_meta table."""
     try:
@@ -108,7 +162,7 @@ def save_stored_repo_meta(
         pass
 
 
-def get_stored_repo_id(repo_path: Optional[str] = None, db_path: Optional[str] = None) -> Optional[str]:
+def get_stored_repo_id(repo_path: str | None = None, db_path: str | None = None) -> str | None:
     """Retrieves stored repo_id from meta.json, SQLite repo_meta table, or database tables."""
     direct_db = db_path
     if not direct_db and repo_path and (repo_path.endswith(".db") or os.path.isfile(repo_path)):
@@ -178,7 +232,7 @@ def get_stored_repo_id(repo_path: Optional[str] = None, db_path: Optional[str] =
     return None
 
 
-def get_default_db_path(repo_path: Optional[str] = None) -> str:
+def get_default_db_path(repo_path: str | None = None) -> str:
     """Returns the default SQLite database path."""
     ctx_url = current_db_url_var.get()
     if ctx_url and ctx_url.startswith("sqlite:///"):
@@ -195,7 +249,7 @@ def get_default_db_path(repo_path: Optional[str] = None) -> str:
     return str(get_archaeologist_dir(repo_path) / "archaeologist.db")
 
 
-def get_default_db_url(repo_path: Optional[str] = None) -> str:
+def get_default_db_url(repo_path: str | None = None) -> str:
     """Returns the default SQLite SQLAlchemy connection URL. repo_path > ContextVar > ARCHAEOLOGIST_DB_URL > SQLite DATABASE_URL."""
     if repo_path:
         path_str = str(get_archaeologist_dir(repo_path) / "archaeologist.db").replace("\\", "/")
@@ -217,7 +271,7 @@ def get_default_db_url(repo_path: Optional[str] = None) -> str:
     return f"sqlite:///{path_str}"
 
 
-def get_default_bm25_path(repo_path: Optional[str] = None) -> str:
+def get_default_bm25_path(repo_path: str | None = None) -> str:
     """Returns default BM25 index path. repo_path > ContextVar > ARCHAEOLOGIST_BM25_PATH > BM25_INDEX_PATH."""
     if repo_path:
         return str(get_archaeologist_dir(repo_path) / "bm25_index.bin")
@@ -237,7 +291,7 @@ def get_default_bm25_path(repo_path: Optional[str] = None) -> str:
     return str(get_archaeologist_dir(repo_path) / "bm25_index.bin")
 
 
-def get_default_qdrant_path(repo_path: Optional[str] = None) -> str:
+def get_default_qdrant_path(repo_path: str | None = None) -> str:
     """Returns default embedded Qdrant storage path. repo_path > ContextVar > QDRANT_STORAGE_PATH > ARCHAEOLOGIST_REPO > cwd."""
     if repo_path:
         return str(get_archaeologist_dir(repo_path) / "qdrant_db")
@@ -257,7 +311,7 @@ def get_default_qdrant_path(repo_path: Optional[str] = None) -> str:
     return str(get_archaeologist_dir(repo_path) / "qdrant_db")
 
 
-def detect_github_remote(repo_path: Optional[str] = None) -> Optional[str]:
+def detect_github_remote(repo_path: str | None = None) -> str | None:
     """Extracts GitHub https URL from git remote origin if available."""
     root = find_repo_root(repo_path)
     try:
@@ -275,13 +329,15 @@ def detect_github_remote(repo_path: Optional[str] = None) -> Optional[str]:
             if ssh_match:
                 return f"https://github.com/{ssh_match.group(1)}/{ssh_match.group(2)}"
             if url.startswith("https://github.com/"):
-                return url.removesuffix(".git").removesuffix("/")
+                return url.rstrip("/").removesuffix(".git").rstrip("/")
+            if url.startswith("http://github.com/"):
+                return "https://" + url[7:].rstrip("/").removesuffix(".git").rstrip("/")
     except Exception:
         pass
     return None
 
 
-def calculate_window_since(window: Optional[str]) -> Optional[str]:
+def calculate_window_since(window: str | None) -> str | None:
     """Calculates the ISO YYYY-MM-DD cutoff date from a window descriptor.
 
     Supported windows:

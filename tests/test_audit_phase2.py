@@ -13,12 +13,12 @@ Validates:
 - D35: Hunk-aware diff parsing with '-- comment' lines
 - CLI: 'why' command line verification
 """
-import os
 import subprocess
-import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
 from typer.testing import CliRunner
+
 
 # D10: git-tracked files only
 def test_d10_chunk_codebase_tracked_files_only(tmp_path):
@@ -46,7 +46,7 @@ def test_d10_chunk_codebase_tracked_files_only(tmp_path):
 # D18: Commit diff summaries cached in Commit.diff_summary
 def test_d18_diff_summary_cached_in_model():
     from archaeologist.storage.models import Commit
-    
+
     c = Commit(
         sha="a" * 40,
         repo_id="test",
@@ -58,21 +58,18 @@ def test_d18_diff_summary_cached_in_model():
     assert c.diff_summary == "Cached diff explanation"
 
 
-# D22: CORS restricted to localhost
-def test_d22_cors_restricted_to_localhost():
-    from fastapi.testclient import TestClient
-    from archaeologist.web.server import app
+# D22: Web UI decoupled notice
+def test_d22_web_ui_decoupled_notice():
+    from typer.testing import CliRunner
 
-    client = TestClient(app)
-    # Evil external domain
-    res_evil = client.options("/api/hotspots/test", headers={"Origin": "https://malicious-site.com", "Access-Control-Request-Method": "GET"})
-    allow_origin = res_evil.headers.get("access-control-allow-origin")
-    assert allow_origin != "https://malicious-site.com"
-    assert allow_origin != "*"
+    from archaeologist.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, ["ui"])
+    assert result.exit_code == 0
+    assert "Notice" in result.output
+    assert "standalone" in result.output
+    assert "repository" in result.output
 
-    # Localhost domain
-    res_local = client.options("/api/hotspots/test", headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"})
-    assert res_local.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 # D25: Blame explain with git show fallback
@@ -99,8 +96,8 @@ def test_d25_blame_explain_fallback_to_git_show(tmp_path):
 # D25: Change coupling skips large commits
 def test_d25_change_coupling_skips_large_commits(tmp_path):
     from archaeologist.mcp_server.tools import change_coupling_tool
-    from archaeologist.storage.db import get_session_context
     from archaeologist.storage.context import current_db_url_var
+    from archaeologist.storage.db import get_session_context
     from archaeologist.storage.models import Commit
 
     db_path = tmp_path / "coupling.db"
@@ -130,8 +127,8 @@ def test_d25_change_coupling_skips_large_commits(tmp_path):
 # D25: Symbol history exact segment matching
 def test_d25_symbol_history_exact_matching(tmp_path):
     from archaeologist.mcp_server.tools import symbol_history_tool
-    from archaeologist.storage.db import get_session_context
     from archaeologist.storage.context import current_db_url_var
+    from archaeologist.storage.db import get_session_context
     from archaeologist.storage.models import Commit
 
     db_path = tmp_path / "sym.db"
@@ -223,8 +220,9 @@ def global_helper():
 
 # D32: Embedder timeout enforcement
 def test_d32_embedder_timeouts(monkeypatch):
-    from archaeologist.retrieval.embedder import Embedder
     import urllib.request
+
+    from archaeologist.retrieval.embedder import Embedder
 
     for k in ("GEMINI_API_KEY", "GEMINI_API_KEY_SECONDARY", "GOOGLE_API_KEY"):
         monkeypatch.delenv(k, raising=False)

@@ -1,5 +1,5 @@
-from typing import Optional, List, Dict
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
+
+from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 SUMMARIZE_PROMPT = """Analyze the following unified git diff and provide a 2-3 sentence summary of the structural code changes made. Focus on what was added, modified, or deleted, and any key rationale visible in code logic.
 
@@ -26,7 +26,7 @@ Return a JSON object mapping each commit SHA to its summary, matching this exact
 }}"""
 
 class LLMSummarizer:
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key or get_gemini_api_key()
         self.client = None
         if self.api_key:
@@ -35,7 +35,7 @@ class LLMSummarizer:
             except Exception:
                 pass
 
-    def summarize_diff(self, diff_text: str) -> Optional[str]:
+    def summarize_diff(self, diff_text: str) -> str | None:
         if not diff_text or not diff_text.strip():
             return None
 
@@ -55,7 +55,7 @@ class LLMSummarizer:
                 return None
         return None
 
-    def summarize_diff_batch(self, diff_items: List[Dict[str, str]]) -> Dict[str, str]:
+    def summarize_diff_batch(self, diff_items: list[dict[str, str]]) -> dict[str, str]:
         """Summarizes multiple commit diffs in a single batched API call to minimize request count."""
         if not diff_items or not self.client:
             return {}

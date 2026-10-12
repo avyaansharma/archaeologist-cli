@@ -1,29 +1,20 @@
 import os
-import sys
-import pytest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
-from sqlmodel import select, SQLModel, create_engine, Session
 
-from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex, find_candidate_forensics
+import pytest
+from sqlmodel import select
+
 from archaeologist.agent.nodes.search import search_node
 from archaeologist.mcp_server.tools import (
+    change_coupling_tool,
     find_related_discussion_tool,
     repo_hotspots_tool,
     repo_ownership_tool,
-    change_coupling_tool,
-    repo_symbols_tool,
-    symbol_history_tool
 )
-from archaeologist.web.server import (
-    get_hotspots,
-    get_ownership,
-    get_coupling,
-    get_symbols,
-    get_symbol_history,
-    get_causal_knowledge_graph
-)
+from archaeologist.retrieval.causal_graph import get_causal_knowledge_graph
 from archaeologist.retrieval.embedder import Embedder
+from archaeologist.storage.models import Chunk, Commit, Issue, PullRequest, SymbolIndex, find_candidate_forensics
 
 
 @pytest.fixture
@@ -32,7 +23,7 @@ def isolated_db(tmp_path, monkeypatch):
     db_file = tmp_path / "test_phase4.db"
     db_url = f"sqlite:///{db_file}"
     monkeypatch.setenv("DATABASE_URL", db_url)
-    
+
     from archaeologist.storage import db
     db.init_db(db_url)
     return db_url
@@ -41,22 +32,22 @@ def isolated_db(tmp_path, monkeypatch):
 def test_bug41_pipeline_file_chunks_include_repo_id(tmp_path, monkeypatch):
     """Bug 41: File chunks in Step 1b must record repo_id rather than defaulting to None."""
     from archaeologist.ingestion.pipeline import IngestionPipeline
-    
+
     repo_dir = tmp_path / "mock_repo"
     repo_dir.mkdir()
     (repo_dir / "app.py").write_text("def hello(): return 'world'\n", encoding="utf-8")
-    
+
     db_file = tmp_path / "test_pipeline.db"
     db_url = f"sqlite:///{db_file}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     from archaeologist.storage import db
     db.init_db(db_url)
-    
+
     pipeline = IngestionPipeline(
         repo_path=str(repo_dir),
         repo_id="test-org/repo-alpha"
     )
-    
+
     # Run Step 1b logic
     all_chunks = []
     with db.get_session_context() as session:
@@ -87,7 +78,7 @@ def test_bug41_pipeline_file_chunks_include_repo_id(tmp_path, monkeypatch):
                     })
         session.add_all([Chunk(**c) for c in all_chunks])
         session.commit()
-    
+
     with db.get_session_context() as session:
         file_chunks = session.exec(select(Chunk).where(Chunk.repo_id == "test-org/repo-alpha")).all()
         assert len(file_chunks) == 1
@@ -101,7 +92,7 @@ def test_bug42_search_node_ast_and_fallback_isolation(isolated_db, monkeypatch):
         # Seed SymbolIndex for repo_A and repo_B
         session.add(SymbolIndex(repo_id="repo_A", symbol_id="f1::AuthService", file_path="f1.py", symbol_name="AuthService", kind="class", commit_count=5))
         session.add(SymbolIndex(repo_id="repo_B", symbol_id="f2::AuthService", file_path="f2.py", symbol_name="AuthService", kind="class", commit_count=5))
-        
+
         # Seed Chunks
         session.add(Chunk(
             id="chunk-a1",
@@ -135,17 +126,17 @@ def test_bug42_search_node_ast_and_fallback_isolation(isolated_db, monkeypatch):
         "evidence_by_chunk_id": {},
         "_current_plan": {"repo_id": "repo_A"}
     }
-    
+
     # Mock embedder to avoid external API calls
     with patch("archaeologist.agent.nodes.search._get_embedder") as mock_emb_getter:
         mock_embedder = MagicMock()
         mock_embedder.dimension = 384
         mock_embedder.embed_texts.return_value = ([], [False])
         mock_emb_getter.return_value = mock_embedder
-        
+
         result = search_node(state)
         retrieved = result.get("retrieved_chunks", [])
-        
+
         # Must only retrieve chunks for repo_A
         for chunk in retrieved:
             assert chunk.get("repo_id") == "repo_A"
@@ -181,19 +172,18 @@ async def test_bug43_web_server_endpoints_pass_repo_id(isolated_db, monkeypatch)
         ))
         session.commit()
 
-    with patch("archaeologist.web.server._activate_repo_environment"):
-        hotspots_res = await get_hotspots("flask", top_n=10)
-        hotspot_files = [h["file_path"] for h in hotspots_res["hotspots"]]
-        assert "flask/app.py" in hotspot_files
-        assert "requests/api.py" not in hotspot_files
+    hotspots_res = repo_hotspots_tool(repo_id="flask", top_n=10)
+    hotspot_files = [h["file_path"] for h in hotspots_res]
+    assert "flask/app.py" in hotspot_files
+    assert "requests/api.py" not in hotspot_files
 
-        ownership_res = await get_ownership("flask")
-        assert "Alice" in ownership_res["ownership"]["author_distribution"]
-        assert "Bob" not in ownership_res["ownership"]["author_distribution"]
+    ownership_res = repo_ownership_tool(repo_id="flask")
+    assert "Alice" in ownership_res["author_distribution"]
+    assert "Bob" not in ownership_res["author_distribution"]
 
-        coupling_res = await get_coupling("flask", min_co_commits=1)
-        for c in coupling_res["couplings"]:
-            assert "requests/api.py" not in (c["file_a"], c["file_b"])
+    coupling_res = change_coupling_tool(repo_id="flask", min_co_commits=1)
+    for c in coupling_res:
+        assert "requests/api.py" not in (c["file_a"], c["file_b"])
 
 
 @pytest.mark.asyncio
@@ -207,13 +197,13 @@ async def test_bug44_web_server_knowledge_graph_filters_by_repo(isolated_db):
         session.add(PullRequest(repo_id="repo_B", number=21, title="PR in B", state="merged", created_at=datetime.utcnow()))
         session.commit()
 
-    with patch("archaeologist.web.server._activate_repo_environment", return_value={"name": "repo_A"}):
-        graph = await get_causal_knowledge_graph("repo_A")
-        node_ids = [n["id"] for n in graph["nodes"]]
-        assert "issue:#10" in node_ids
-        assert "pr:#11" in node_ids
-        assert "issue:#20" not in node_ids
-        assert "pr:#21" not in node_ids
+    graph = get_causal_knowledge_graph("repo_A")
+    node_ids = [n["id"] for n in graph["nodes"]]
+    assert "issue:#10" in node_ids
+    assert "pr:#11" in node_ids
+    assert "issue:#20" not in node_ids
+    assert "pr:#21" not in node_ids
+
 
 
 def test_bug45_find_related_discussion_tool_supports_repo_id(isolated_db):
@@ -259,7 +249,7 @@ def test_bug47_embedder_rotates_on_non_429_errors(monkeypatch):
     """Bug 47: Embedder must rotate to secondary Gemini key when primary key fails with non-429 error."""
     monkeypatch.setenv("USE_FASTEMBED", "0")
     monkeypatch.delenv("USE_FASTEMBED", raising=False)
-    
+
     embedder = Embedder(gemini_key="invalid_primary_key")
     embedder.gemini_keys = ["invalid_primary_key", "valid_secondary_key"]
     embedder.model = "models/gemini-embedding-001"

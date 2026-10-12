@@ -1,11 +1,10 @@
-import os
 import ast
+import os
 import subprocess
-import tiktoken
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Optional
 
+import tiktoken
 
 _ENC = None
 
@@ -53,18 +52,18 @@ def token_count(text: str) -> int:
         return 0
     return len(enc.encode(text))
 
-def make_deterministic_chunk_id(source_type: str, source_id: str, index: int = 0, text_snippet: str = "", repo_id: Optional[str] = None) -> str:
+def make_deterministic_chunk_id(source_type: str, source_id: str, index: int = 0, text_snippet: str = "", repo_id: str | None = None) -> str:
     """Generates a deterministic UUID5 chunk ID based on source metadata, index, and repository scope."""
     key = f"{repo_id or ''}:{source_type}:{source_id}:{index}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
-def chunk_commit(commit: dict, diff_summary: str | None, repo_id: Optional[str] = None) -> List[dict]:
+def chunk_commit(commit: dict, diff_summary: str | None, repo_id: str | None = None) -> list[dict]:
     body = diff_summary or ""
     symbols_str = ", ".join(commit.get("symbols_modified", []))
     sym_header = f"\nSymbols Modified: {symbols_str}" if symbols_str else ""
     raw_msg = commit.get("message") or ""
     actual_repo_id = repo_id or commit.get("repo_id")
-    
+
     # Enrich with causal revert metadata
     revert_meta = ""
     related_ids = list(commit.get("related_ids", []))
@@ -76,7 +75,7 @@ def chunk_commit(commit: dict, diff_summary: str | None, repo_id: Optional[str] 
         revert_meta += f"\n[Superseded by Revert]: {commit['superseded_by_sha']}"
         if commit["superseded_by_sha"] not in related_ids:
             related_ids.append(commit["superseded_by_sha"])
-    
+
     text = f"Commit {commit['sha']} by {commit['author_name']}\nMessage: {raw_msg}{sym_header}{revert_meta}\n\nDiff Summary:\n{body}".strip()
     if token_count(text) > 500:
         msg_prefix = f"Commit {commit['sha']} by {commit['author_name']}\nMessage: "
@@ -94,7 +93,7 @@ def chunk_commit(commit: dict, diff_summary: str | None, repo_id: Optional[str] 
         text = f"{msg_text}{body}".strip()
         if token_count(text) > 520:
             text = enc.decode(enc.encode(text)[:500])
-        
+
     is_reverted_commit = bool(commit.get("superseded_by_sha"))
     chunk_id = make_deterministic_chunk_id("commit", commit["sha"], 0, text, repo_id=actual_repo_id)
     chunks = [{
@@ -156,12 +155,12 @@ def chunk_commit(commit: dict, diff_summary: str | None, repo_id: Optional[str] 
 
     return chunks
 
-def chunk_issue(issue: dict, repo_id: Optional[str] = None) -> List[dict]:
+def chunk_issue(issue: dict, repo_id: str | None = None) -> list[dict]:
     chunks = []
     source_id = f"issue#{issue['number']}"
     author_name = issue.get("author") or "unknown"
     actual_repo_id = repo_id or issue.get("repo_id")
-    
+
     related_ids = [f"pr#{num}" for num in issue.get("linked_pr_numbers", [])]
     for sha in issue.get("linked_commit_shas", []):
         c_ref = f"commit#{sha}"
@@ -175,7 +174,7 @@ def chunk_issue(issue: dict, repo_id: Optional[str] = None) -> List[dict]:
         issue_start = f"[Issue #{issue['number']} - '{issue['title']}' created by {author_name}]\n{truncated_body}..."
 
     created_at = issue.get("created_at") or datetime.utcnow()
-    
+
     chunk_id_head = make_deterministic_chunk_id("issue", source_id, 0, issue_start, repo_id=actual_repo_id)
     chunks.append({
         "id": chunk_id_head,
@@ -198,7 +197,7 @@ def chunk_issue(issue: dict, repo_id: Optional[str] = None) -> List[dict]:
         if token_count(comment_text) > 400:
             truncated = enc.decode(enc.encode(c_body)[:350])
             comment_text = f"[Issue #{issue['number']} comment by {c_author}]: {truncated}..."
-        
+
         c_time = c.get("created_at")
         if isinstance(c_time, str):
             try:
@@ -207,7 +206,7 @@ def chunk_issue(issue: dict, repo_id: Optional[str] = None) -> List[dict]:
                 c_time = created_at
         else:
             c_time = c_time or created_at
-            
+
         chunk_id_comm = make_deterministic_chunk_id("issue", source_id, idx, comment_text, repo_id=actual_repo_id)
         chunks.append({
             "id": chunk_id_comm,
@@ -225,12 +224,12 @@ def chunk_issue(issue: dict, repo_id: Optional[str] = None) -> List[dict]:
 
     return chunks
 
-def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
+def chunk_pr(pr: dict, repo_id: str | None = None) -> list[dict]:
     chunks = []
     source_id = f"pr#{pr['number']}"
     author_name = pr.get("author") or "unknown"
     actual_repo_id = repo_id or pr.get("repo_id")
-    
+
     related_ids = [f"issue#{num}" for num in pr.get("linked_issue_numbers", [])]
     merge_sha = pr.get("merge_commit_sha") or pr.get("merged_commit_sha")
     if merge_sha:
@@ -249,7 +248,7 @@ def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
         pr_start = f"[PR #{pr['number']} - '{pr['title']}' created by {author_name}]\n{truncated_body}..."
 
     created_at = pr.get("created_at") or datetime.utcnow()
-    
+
     chunk_id_head = make_deterministic_chunk_id("pr", source_id, 0, pr_start, repo_id=actual_repo_id)
     chunks.append({
         "id": chunk_id_head,
@@ -277,7 +276,7 @@ def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
         if token_count(comment_text) > 400:
             truncated = enc.decode(enc.encode(c_body)[:350])
             comment_text = f"[PR #{pr['number']} inline review comment by {c_author}{path_info}]: {truncated}..."
-            
+
         c_time = c.get("created_at")
         if isinstance(c_time, str):
             try:
@@ -311,7 +310,7 @@ def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
         if token_count(comment_text) > 400:
             truncated = enc.decode(enc.encode(c_body)[:350])
             comment_text = f"[PR #{pr['number']} comment by {c_author}]: {truncated}..."
-            
+
         c_time = c.get("created_at")
         if isinstance(c_time, str):
             try:
@@ -345,18 +344,18 @@ def chunk_pr(pr: dict, repo_id: Optional[str] = None) -> List[dict]:
 _MIN_METHOD_TOKENS = 20
 
 
-def _build_class_header(node: ast.ClassDef, lines: List[str], rel_path: str) -> str:
+def _build_class_header(node: ast.ClassDef, lines: list[str], rel_path: str) -> str:
     """Builds a class header string: class signature + docstring + attribute annotations.
     
     Does NOT include method bodies — those are decomposed into separate chunks.
     """
     # Start with the class definition line(s) and any decorators
     header_parts = []
-    
+
     # Class definition line
     class_line = lines[node.lineno - 1]
     header_parts.append(class_line)
-    
+
     # Extract docstring if present
     if node.body and isinstance(node.body[0], ast.Expr):
         val = node.body[0].value
@@ -367,18 +366,18 @@ def _build_class_header(node: ast.ClassDef, lines: List[str], rel_path: str) -> 
             doc_end = getattr(doc_node, 'end_lineno', doc_node.lineno)
             doc_lines = lines[doc_node.lineno - 1 : doc_end]
             header_parts.extend(doc_lines)
-    
+
     # Extract class-level attribute annotations and assignments (not methods)
     for child in node.body:
         if isinstance(child, (ast.AnnAssign, ast.Assign)):
             child_end = getattr(child, 'end_lineno', child.lineno)
             attr_lines = lines[child.lineno - 1 : child_end]
             header_parts.extend(attr_lines)
-    
+
     return "\n".join(header_parts)
 
 
-def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
+def chunk_codebase(repo_path: str, repo_id: str | None = None) -> list[dict]:
     """Walks the target codebase repository, parses AST symbols in current Python files,
     and creates baseline code chunks.
     
@@ -401,11 +400,14 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
     if os.path.exists(git_dir):
         try:
             res = subprocess.run(
-                ["git", "-C", repo_path, "ls-files", "*.py"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace"
+                ["git", "-C", repo_path, "-c", "core.quotepath=false", "ls-files", "-z", "*.py"],
+                capture_output=True
             )
-            if res.returncode == 0 and res.stdout.strip():
-                for line in res.stdout.splitlines():
+            if res.returncode == 0 and res.stdout:
+                for raw_b in res.stdout.split(b"\0"):
+                    if not raw_b:
+                        continue
+                    line = raw_b.decode("utf-8", errors="replace")
                     clean_rel = line.strip().replace("\\", "/")
                     if clean_rel and not any(part in ("venv", ".venv", "tests", "__pycache__", "build", "dist") for part in clean_rel.split("/")):
                         abs_p = os.path.join(repo_path, clean_rel)
@@ -426,11 +428,11 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                 py_files.append((full_path, rel_path))
 
     for full_path, rel_path in py_files:
-            
+
             try:
-                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(full_path, encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                
+
                 if not content.strip():
                     continue
 
@@ -455,10 +457,10 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                 sub for sub in node.body
                                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
                             ]
-                            
+
                             # 1. Build class header chunk (signature + docstring + attrs + tiny methods)
                             header_text = _build_class_header(node, file_lines, rel_path)
-                            
+
                             # Collect tiny methods to group into the header chunk
                             tiny_method_names = []
                             for m in inner_methods:
@@ -468,7 +470,7 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                 if m_toks < _MIN_METHOD_TOKENS:
                                     tiny_method_names.append(m.name)
                                     header_text += "\n" + m_code
-                            
+
                             # Include __init__ in the header chunk (it provides class context)
                             for m in inner_methods:
                                 if m.name == "__init__" and m.name not in tiny_method_names:
@@ -480,11 +482,11 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                     else:
                                         header_text += "\n" + enc.decode(enc.encode(m_code)[:400])
                                     break
-                            
+
                             header_chunk_text = f"File: {rel_path}\nClass: {node.name}\n\n{header_text}".strip()
                             if token_count(header_chunk_text) > 600:
                                 header_chunk_text = enc.decode(enc.encode(header_chunk_text)[:500])
-                            
+
                             header_symbols = [node.name] + tiny_method_names
                             header_id = make_deterministic_chunk_id("code", f"{rel_path}:{node.name}", idx, header_chunk_text, repo_id=repo_id)
                             chunks.append({
@@ -500,20 +502,20 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                 "token_count": token_count(header_chunk_text),
                                 "related_ids": []
                             })
-                            
+
                             # 2. Create individual per-method chunks for substantial methods
                             method_sub_idx = 0
                             for m in inner_methods:
                                 if m.name in tiny_method_names or m.name == "__init__":
                                     continue
-                                 
+
                                 m_end = getattr(m, 'end_lineno', m.lineno + 30)
                                 m_code = "\n".join(file_lines[m.lineno - 1 : m_end])
                                 m_toks = token_count(m_code)
-                                 
+
                                 if m_toks > 600:
                                     m_code = enc.decode(enc.encode(m_code)[:500])
-                                 
+
                                 method_chunk_text = f"File: {rel_path}\nClass: {node.name}\nMethod: {m.name}\n\n{m_code}".strip()
                                 method_sub_idx += 1
                                 method_id = make_deterministic_chunk_id(
@@ -532,12 +534,12 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                     "token_count": token_count(method_chunk_text),
                                     "related_ids": []
                                 })
-                         
+
                         else:
                             # --- Small class or top-level function: single chunk ---
                             if node_tokens > 600:
                                 node_code = enc.decode(enc.encode(node_code)[:500])
-                             
+
                             # For small classes, enrich symbols_modified with method names
                             chunk_symbols = [node.name]
                             if isinstance(node, ast.ClassDef):
@@ -545,7 +547,7 @@ def chunk_codebase(repo_path: str, repo_id: Optional[str] = None) -> List[dict]:
                                     if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                         if sub.name not in chunk_symbols:
                                             chunk_symbols.append(sub.name)
-                             
+
                             chunk_text = f"File: {rel_path}\nSymbol: {node.name}\n\n{node_code}".strip()
                             chunk_id = make_deterministic_chunk_id("code", f"{rel_path}:{node.name}", idx, chunk_text, repo_id=repo_id)
                             chunks.append({

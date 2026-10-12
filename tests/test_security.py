@@ -1,6 +1,9 @@
-import pytest
 import os
-from archaeologist.utils.security import validate_repo_path, sanitize_file_path, sanitize_sha
+
+import pytest
+
+from archaeologist.utils.security import sanitize_file_path, sanitize_sha, validate_repo_path
+
 
 def test_validate_repo_path_success(tmp_path):
     repo_dir = tmp_path / "my_repo"

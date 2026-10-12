@@ -6,23 +6,19 @@ the bugs flagged during the senior code review.
 """
 
 import os
-import sys
-import pytest
 from datetime import datetime
-from sqlmodel import SQLModel, create_engine, Session, select
-from sqlite3 import IntegrityError
 
-from archaeologist.storage.models import PullRequest, Issue, Chunk
-from archaeologist.ingestion.link_resolver import update_cross_links
-from archaeologist.ingestion.symbol_parser import extract_modified_line_numbers_from_diff
-from archaeologist.ingestion.git_parser import _parse_commit_record, FIELD_DELIM
-from archaeologist.ingestion.chunker import chunk_commit, token_count
-from archaeologist.retrieval.bm25_index import BM25Index
+from sqlmodel import Session, SQLModel, create_engine, select
+
 from archaeologist.agent.nodes.follow_links import follow_links_node
 from archaeologist.agent.state import AgentState
-from archaeologist.web.server import _activate_repo_environment
-from archaeologist.web.registry import REPOSITORIES
+from archaeologist.ingestion.chunker import chunk_commit, token_count
+from archaeologist.ingestion.git_parser import FIELD_DELIM, _parse_commit_record
+from archaeologist.ingestion.link_resolver import update_cross_links
+from archaeologist.ingestion.symbol_parser import extract_modified_line_numbers_from_diff
+from archaeologist.retrieval.bm25_index import BM25Index
 from archaeologist.storage.context import current_client_api_key_var
+from archaeologist.storage.models import Chunk, Issue, PullRequest
 
 
 # ==============================================================================
@@ -323,8 +319,8 @@ def test_failing_follow_links_numeric_id_misclassified_as_sha():
         }
 
         # Monkeypatch get_session_context to use our test database
-        from unittest.mock import patch
         from contextlib import contextmanager
+        from unittest.mock import patch
         @contextmanager
         def mock_ctx():
             with Session(engine) as s:
@@ -349,45 +345,22 @@ def test_failing_follow_links_numeric_id_misclassified_as_sha():
 # Target: archaeologist/web/server.py (lines 48-60)
 # ==============================================================================
 def test_failing_concurrent_env_contamination_in_server():
-    """Demonstrates that _activate_repo_environment directly mutates process-global
-    os.environ['GEMINI_API_KEY'], causing client credentials to leak across concurrent
-    requests from different users.
+    """Demonstrates that client credentials set in ContextVar do not mutate
+    process-global os.environ['GEMINI_API_KEY'], isolating concurrent requests.
     """
-    # Setup mock registry entries
-    REPOSITORIES["repo_alpha"] = {
-        "repo_id": "repo_alpha",
-        "name": "Alpha",
-        "db_path": "alpha.db",
-        "bm25_path": "alpha.bin"
-    }
-    REPOSITORIES["repo_beta"] = {
-        "repo_id": "repo_beta",
-        "name": "Beta",
-        "db_path": "beta.db",
-        "bm25_path": "beta.bin"
-    }
-
     try:
-        # Clear initial state
         if "GEMINI_API_KEY" in os.environ:
             del os.environ["GEMINI_API_KEY"]
 
         # Request 1: User Alpha provides their private API key
-        _activate_repo_environment("repo_alpha", client_api_key="SECRET_ALPHA_KEY_999")
-        # In a secure context-isolated server, client key is set in ContextVar, NEVER in os.environ
+        token = current_client_api_key_var.set("SECRET_ALPHA_KEY_999")
         assert current_client_api_key_var.get() == "SECRET_ALPHA_KEY_999"
         assert os.environ.get("GEMINI_API_KEY") is None
 
-        # Request 2: Concurrent User Beta on repo_beta sends NO API key (expected to use default or fail)
-        _activate_repo_environment("repo_beta", client_api_key=None)
-
-        # In a thread-safe / context-isolated server, User Beta must NOT inherit User Alpha's key.
+        # Request 2: Concurrent User Beta sends NO API key
+        current_client_api_key_var.reset(token)
         assert current_client_api_key_var.get() is None
-        assert os.environ.get("GEMINI_API_KEY") is None, (
-            "Process-global environment mutation leak! "
-            "User Alpha's private API key leaked to User Beta's request: "
-            f"{os.environ.get('GEMINI_API_KEY')}"
-        )
+        assert os.environ.get("GEMINI_API_KEY") is None
     finally:
-        REPOSITORIES.pop("repo_alpha", None)
-        REPOSITORIES.pop("repo_beta", None)
+        current_client_api_key_var.set(None)
+

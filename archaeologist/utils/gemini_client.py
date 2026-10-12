@@ -1,21 +1,25 @@
-import os
-import sys
 import json
+import os
 import re
-import time
+import sys
 import threading
+import time
 import warnings
-from typing import Optional, Dict, Any, List
+from typing import Any
+
 from google import genai
 from google.genai import types
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 warnings.filterwarnings("ignore", message=".*automatic function calling.*")
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
 from dotenv import load_dotenv
 
-load_dotenv()
+if not os.getenv("PYTEST_CURRENT_TEST"):
+    load_dotenv()
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
 FALLBACK_MODELS = [
@@ -25,7 +29,7 @@ FALLBACK_MODELS = [
     "gemini-3.8-flash",
 ]
 
-def get_gemini_api_keys() -> List[str]:
+def get_gemini_api_keys() -> list[str]:
     keys = []
     try:
         from archaeologist.storage.context import current_client_api_key_var
@@ -45,7 +49,7 @@ def get_gemini_api_keys() -> List[str]:
         keys.append(k3)
     return keys
 
-def get_gemini_api_key() -> Optional[str]:
+def get_gemini_api_key() -> str | None:
     keys = get_gemini_api_keys()
     return keys[0] if keys else None
 
@@ -55,14 +59,14 @@ class GeminiClientWrapper:
     _min_request_interval = 1.0     # Minimum 1.0 second delay between API calls
     _semaphore = threading.BoundedSemaphore(value=2)  # Max 2 concurrent API calls
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         provided_key = api_key or get_gemini_api_key()
         self.api_keys = get_gemini_api_keys()
         if provided_key and provided_key not in self.api_keys:
             self.api_keys.insert(0, provided_key)
         if not self.api_keys:
             raise ValueError("GEMINI_API_KEY environment variable is required.")
-            
+
         self.clients = [genai.Client(api_key=k) for k in self.api_keys]
 
     def _wait_for_rate_limit(self):
@@ -77,7 +81,7 @@ class GeminiClientWrapper:
     def generate_text(
         self,
         prompt: str,
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         model: str = DEFAULT_MODEL,
         temperature: float = 0.0,
         max_output_tokens: int = 2000
@@ -88,7 +92,7 @@ class GeminiClientWrapper:
             max_output_tokens=max_output_tokens,
             system_instruction=system_instruction if system_instruction else None
         )
-        
+
         models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
         last_exception = None
 
@@ -99,20 +103,23 @@ class GeminiClientWrapper:
                 for m_name in models_to_try:
                     if key_exhausted_or_invalid:
                         break
+                    executor = ThreadPoolExecutor(max_workers=1)
                     try:
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(
-                                client.models.generate_content,
-                                model=m_name,
-                                contents=prompt,
-                                config=config
-                            )
-                            response = future.result(timeout=30.0)
+                        future = executor.submit(
+                            client.models.generate_content,
+                            model=m_name,
+                            contents=prompt,
+                            config=config
+                        )
+                        response = future.result(timeout=30.0)
+                        executor.shutdown(wait=False)
                         return response.text.strip() if (response and response.text) else ""
                     except FutureTimeoutError:
+                        executor.shutdown(wait=False, cancel_futures=True)
                         print(f"Notice: Gemini call timed out after 30s on {m_name}. Trying next fallback model...", file=sys.stderr)
                         continue
                     except Exception as e:
+                        executor.shutdown(wait=False)
                         last_exception = e
                         err_str = str(e)
                         if any(k in err_str for k in ["400", "401", "403", "API_KEY_INVALID", "PERMISSION_DENIED"]):
@@ -129,11 +136,11 @@ class GeminiClientWrapper:
     def generate_json(
         self,
         prompt: str,
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         model: str = DEFAULT_MODEL,
         temperature: float = 0.0,
         max_output_tokens: int = 2000
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generates JSON object using Google Gemini API with API key fallback and clean JSON parsing."""
         raw_text = self.generate_text(
             prompt=prompt,
@@ -142,7 +149,7 @@ class GeminiClientWrapper:
             temperature=temperature,
             max_output_tokens=max_output_tokens
         )
-        
+
         # 1. Search for markdown code block anywhere in response
         code_block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
         if code_block:
@@ -153,7 +160,7 @@ class GeminiClientWrapper:
                 cleaned = re.sub(r"^```(?:json)?\n?", "", cleaned)
                 cleaned = re.sub(r"\n?```$", "", cleaned)
                 cleaned = cleaned.strip()
-            
+
         try:
             parsed = json.loads(cleaned)
             if isinstance(parsed, dict):

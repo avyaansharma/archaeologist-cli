@@ -1,6 +1,5 @@
 import re
-from typing import List, Set, Tuple, Any, Optional
-
+from typing import Any
 
 ISSUE_REF = re.compile(r'#(\d+)')
 CLOSES_CLAUSE = re.compile(
@@ -24,17 +23,17 @@ def extract_refs(text: str) -> dict:
     all_refs = {int(n) for n in ISSUE_REF.findall(text)} | {int(n) for n in FULL_URL_REF.findall(text)}
     mentions = all_refs - closes
     shas = {s.lower() for s in SHA_REF.findall(text) if len(s) >= 7}
-    
+
     return {
-        "closes": sorted(list(closes)),
-        "mentions": sorted(list(mentions)),
-        "shas": sorted(list(shas))
+        "closes": sorted(closes),
+        "mentions": sorted(mentions),
+        "shas": sorted(shas)
     }
 
 def update_cross_links(
-    session_or_prs: Any, 
-    issue_list: Optional[List[dict]] = None,
-    repo_id: Optional[str] = None
+    session_or_prs: Any,
+    issue_list: list[dict] | None = None,
+    repo_id: str | None = None
 ) -> Any:
     """Updates linked_issue_numbers on PRs and linked_pr_numbers on issues in-place, plus linked_commit_shas.
     Supports either an ORM Session: update_cross_links(session, repo_id=repo_id)
@@ -43,7 +42,8 @@ def update_cross_links(
     if issue_list is None and hasattr(session_or_prs, "exec"):
         session = session_or_prs
         from sqlmodel import select
-        from archaeologist.storage.models import PullRequest, Issue
+
+        from archaeologist.storage.models import Issue, PullRequest
 
         pr_query = select(PullRequest)
         iss_query = select(Issue)
@@ -80,11 +80,11 @@ def update_cross_links(
                     target_issue = issue_map[issue_key]
                     existing_prs = set(target_issue.linked_pr_numbers or [])
                     existing_prs.add(p.number)
-                    target_issue.linked_pr_numbers = sorted(list(existing_prs))
+                    target_issue.linked_pr_numbers = sorted(existing_prs)
                     session.add(target_issue)
 
-            p.linked_issue_numbers = sorted(list(linked_issues))
-            p.linked_commit_shas = sorted(list(linked_shas))
+            p.linked_issue_numbers = sorted(linked_issues)
+            p.linked_commit_shas = sorted(linked_shas)
             session.add(p)
 
         for i in all_issues:
@@ -108,11 +108,11 @@ def update_cross_links(
                     target_pr = pr_map[pr_key]
                     existing_issues = set(target_pr.linked_issue_numbers or [])
                     existing_issues.add(i.number)
-                    target_pr.linked_issue_numbers = sorted(list(existing_issues))
+                    target_pr.linked_issue_numbers = sorted(existing_issues)
                     session.add(target_pr)
 
-            i.linked_pr_numbers = sorted(list(linked_prs))
-            i.linked_commit_shas = sorted(list(linked_shas))
+            i.linked_pr_numbers = sorted(linked_prs)
+            i.linked_commit_shas = sorted(linked_shas)
             session.add(i)
 
         session.commit()
@@ -142,8 +142,8 @@ def update_cross_links(
 
         refs = extract_refs(all_text)
         all_issues = set(p["linked_issue_numbers"]) | set(refs["closes"]) | set(refs["mentions"])
-        p["linked_issue_numbers"] = sorted(list(all_issues))
-        p["linked_commit_shas"] = sorted(list(set(p["linked_commit_shas"]) | set(refs["shas"])))
+        p["linked_issue_numbers"] = sorted(all_issues)
+        p["linked_commit_shas"] = sorted(set(p["linked_commit_shas"]) | set(refs["shas"]))
 
         # Update back-references on issues
         p_repo = p.get("repo_id") or ""
@@ -171,7 +171,7 @@ def update_cross_links(
                 all_text += f"{c} "
 
         refs = extract_refs(all_text)
-        i["linked_commit_shas"] = sorted(list(set(i["linked_commit_shas"]) | set(refs["shas"])))
+        i["linked_commit_shas"] = sorted(set(i["linked_commit_shas"]) | set(refs["shas"]))
 
         i_repo = i.get("repo_id") or ""
         for pr_num in refs["closes"] + refs["mentions"]:

@@ -1,18 +1,18 @@
 import os
-import sys
 import tempfile
 import threading
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 from sqlmodel import select
 
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex
-from archaeologist.web.server import get_causal_knowledge_graph
 from archaeologist.ingestion.link_resolver import update_cross_links
-from archaeologist.retrieval.fusion import reciprocal_rank_fusion
 from archaeologist.mcp_server.tools import search_history_tool
+from archaeologist.retrieval.causal_graph import get_causal_knowledge_graph
+from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Commit, Issue, PullRequest, SymbolIndex
 
 
 @pytest.fixture
@@ -202,7 +202,7 @@ def test_search_history_tool_passes_query_to_rrf(isolated_db):
 def test_concurrent_production_simulation(isolated_db):
     """Production Simulation: Simulates concurrent threads performing reads and writes simultaneously."""
     repo_id = "concurrent-repo"
-    
+
     # Pre-seed base data
     with get_session_context() as session:
         for i in range(10):

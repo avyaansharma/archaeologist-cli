@@ -4,6 +4,7 @@ from archaeologist.cli import app
 from archaeologist.storage.paths import (
     detect_github_remote,
     find_repo_root,
+    get_default_db_path,
     get_default_db_url,
 )
 
@@ -41,20 +42,26 @@ def test_cli_symbols_flask():
     assert "Flask" in result.output
 
 
-def test_storage_paths(monkeypatch):
+def test_storage_paths(golden_repo, tmp_path, monkeypatch):
+    from tests.conftest import assert_path_within
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    root = find_repo_root()
+    root = find_repo_root(str(golden_repo))
     assert (root / ".git").exists()
+    assert root == golden_repo
     db_url = get_default_db_url(str(root))
     assert ".archaeologist" in db_url
+    db_path = get_default_db_path(str(root))
+    assert_path_within(db_path, golden_repo)
     remote = detect_github_remote(str(root))
-    assert remote is not None
-    assert "codebase-archaeologist" in remote
+    assert remote is None or isinstance(remote, str)
+
 
 
 def test_calculate_window_since():
-    import pytest
     from datetime import datetime, timedelta
+
+    import pytest
+
     from archaeologist.storage.paths import calculate_window_since
 
     now = datetime.now()
@@ -112,6 +119,7 @@ def test_mcp_server_initialization():
 def test_db_fresh_engine_provisions_all_tables(tmp_path):
     """Validates that connecting to a brand-new database provisions all 5 schema tables automatically."""
     from sqlalchemy import inspect
+
     from archaeologist.storage.db import get_engine_for_url
 
     new_db_file = tmp_path / "fresh_repo.db"

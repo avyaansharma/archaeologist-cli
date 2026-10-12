@@ -1,11 +1,13 @@
+from datetime import UTC, datetime
+
 import pytest
-from archaeologist.utils.gemini_client import GeminiClientWrapper
+
 from archaeologist.ingestion.link_resolver import extract_refs
-from archaeologist.utils.security import sanitize_file_path
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import PullRequest, Issue, is_valid_pr_or_issue
 from archaeologist.retrieval.vector_store import VectorStore
-from datetime import datetime, timezone
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import PullRequest, is_valid_pr_or_issue
+from archaeologist.utils.gemini_client import GeminiClientWrapper
+from archaeologist.utils.security import sanitize_file_path
 
 
 @pytest.fixture
@@ -73,7 +75,7 @@ def test_sanitize_file_path_returns_forward_slashes_on_windows(tmp_path):
 
 def test_is_valid_pr_or_issue_supports_string_nums_and_repo_basename(clean_db):
     """Bug 4: is_valid_pr_or_issue failed if ref_num was a string or repo_id was a basename."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session_context() as session:
         session.add(PullRequest(
             number=777,
@@ -98,7 +100,7 @@ def test_vector_store_search_supports_repo_basename_matching(tmp_path):
         storage_path=(tmp_path / "qdrant_test").as_posix(),
         collection_name="test_repo_basename"
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     dummy_vec = [0.1] * 768
 
     store.upsert_chunks(

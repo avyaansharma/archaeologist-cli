@@ -1,34 +1,42 @@
-from datetime import datetime
-from typing import Optional, List, Any
-from sqlmodel import SQLModel, Field, JSON, Column, select
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlmodel import JSON, Column, Field, SQLModel, select
+
 
 class Commit(SQLModel, table=True):
     sha: str = Field(primary_key=True)
-    repo_id: Optional[str] = Field(default=None, index=True)
+    repo_id: str | None = Field(default=None, index=True)
     author_name: str
     author_email: str
     authored_date: datetime
     message: str
-    files_changed: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    symbols_modified: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    files_changed: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    symbols_modified: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     insertions: int = 0
     deletions: int = 0
     is_revert: bool = False
-    reverts_sha: Optional[str] = None          # points to the commit this one reverts
-    superseded_by_sha: Optional[str] = None    # set later if this commit is itself reverted
-    diff_summary: Optional[str] = None         # LLM-generated, cached
-    raw_diff_truncated: Optional[str] = None   # first N chars of diff, for small diffs store full
+    reverts_sha: str | None = None          # points to the commit this one reverts
+    superseded_by_sha: str | None = None    # set later if this commit is itself reverted
+    diff_summary: str | None = None         # LLM-generated, cached
+    raw_diff_truncated: str | None = None   # first N chars of diff, for small diffs store full
+
+    def __init__(self, **data):
+        ad = data.get("authored_date")
+        if isinstance(ad, datetime) and ad.tzinfo is not None:
+            data["authored_date"] = ad.astimezone(UTC).replace(tzinfo=None)
+        super().__init__(**data)
 
 class RepoMeta(SQLModel, table=True):
     __tablename__ = "repo_meta"
     repo_id: str = Field(primary_key=True)
-    repo_name: Optional[str] = None
-    repo_url: Optional[str] = None
-    embedder_provider: Optional[str] = None
-    embedder_dimension: Optional[int] = None
-    last_ingested_at: Optional[datetime] = None
-    key: Optional[str] = None
-    value: Optional[str] = None
+    repo_name: str | None = None
+    repo_url: str | None = None
+    embedder_provider: str | None = None
+    embedder_dimension: int | None = None
+    last_ingested_at: datetime | None = None
+    key: str | None = None
+    value: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -36,16 +44,16 @@ class PullRequest(SQLModel, table=True):
     repo_id: str = Field(default="", primary_key=True, index=True)
     number: int = Field(primary_key=True)
     title: str
-    body: Optional[str] = None
+    body: str | None = None
     state: str                                  # open|closed|merged
     author: str = "unknown"
     created_at: datetime
-    merged_at: Optional[datetime] = None
-    merge_commit_sha: Optional[str] = None
-    linked_issue_numbers: List[int] = Field(default_factory=list, sa_column=Column(JSON))
-    linked_commit_shas: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    review_comments: List[dict] = Field(default_factory=list, sa_column=Column(JSON))
-    comments: List[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    merged_at: datetime | None = None
+    merge_commit_sha: str | None = None
+    linked_issue_numbers: list[int] = Field(default_factory=list, sa_column=Column(JSON))
+    linked_commit_shas: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    review_comments: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    comments: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
 
     def __init__(self, **data):
         if data.get("repo_id") is None:
@@ -56,16 +64,16 @@ class Issue(SQLModel, table=True):
     repo_id: str = Field(default="", primary_key=True, index=True)
     number: int = Field(primary_key=True)
     title: str
-    body: Optional[str] = None
+    body: str | None = None
     state: str
-    author: Optional[str] = "unknown"
-    labels: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    author: str | None = "unknown"
+    labels: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime
-    closed_at: Optional[datetime] = None
-    close_reason: Optional[str] = None          # "completed" | "not_planned" | None
-    linked_pr_numbers: List[int] = Field(default_factory=list, sa_column=Column(JSON))
-    linked_commit_shas: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    comments: List[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    closed_at: datetime | None = None
+    close_reason: str | None = None          # "completed" | "not_planned" | None
+    linked_pr_numbers: list[int] = Field(default_factory=list, sa_column=Column(JSON))
+    linked_commit_shas: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    comments: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
 
     def __init__(self, **data):
         if data.get("repo_id") is None:
@@ -74,14 +82,14 @@ class Issue(SQLModel, table=True):
 
 class Chunk(SQLModel, table=True):
     id: str = Field(primary_key=True)            # deterministic uuid5
-    repo_id: Optional[str] = Field(default=None, index=True)
+    repo_id: str | None = Field(default=None, index=True)
     source_type: str                              # "commit"|"pr"|"issue"|"thread_summary"
     source_id: str                                 # sha, or "pr#123", "issue#45"
     text: str
     timestamp: datetime
-    file_paths: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    symbols_modified: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    related_ids: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    file_paths: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    symbols_modified: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    related_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     is_reverted: bool = False
     token_count: int = 0
     embedded: bool = False                         # ingestion progress flag, for resumability
@@ -99,7 +107,7 @@ class SymbolIndex(SQLModel, table=True):
             data["repo_id"] = ""
         super().__init__(**data)
 
-def is_valid_commit_sha(session, sha_str: str, repo_id: Optional[str] = None) -> bool:
+def is_valid_commit_sha(session, sha_str: str, repo_id: str | None = None) -> bool:
     if not sha_str or len(sha_str) < 7:
         return False
     from archaeologist.utils.security import escape_like
@@ -110,7 +118,7 @@ def is_valid_commit_sha(session, sha_str: str, repo_id: Optional[str] = None) ->
     result = session.exec(stmt).first()
     return result is not None
 
-def is_valid_pr_or_issue(session, ref_num: Any, repo_id: Optional[str] = None) -> bool:
+def is_valid_pr_or_issue(session, ref_num: Any, repo_id: str | None = None) -> bool:
     try:
         clean_num = int(ref_num)
     except (ValueError, TypeError):
@@ -140,7 +148,7 @@ def is_valid_pr_or_issue(session, ref_num: Any, repo_id: Optional[str] = None) -
         return True
     return session.exec(issue_stmt).first() is not None
 
-def _repo_filter(model_col, repo_id: Optional[str]):
+def _repo_filter(model_col, repo_id: str | None):
     if not repo_id:
         return True
     from sqlalchemy import func
@@ -160,20 +168,21 @@ def _repo_filter(model_col, repo_id: Optional[str]):
         (func.lower(model_col) == base_lower)
     )
 
-def find_candidate_symbols(session, text: str, repo_id: Optional[str] = None, limit: int = 8) -> List[dict]:
+def find_candidate_symbols(session, text: str, repo_id: str | None = None, limit: int = 8) -> list[dict]:
     """Finds candidate code symbols matching key tokens in the question text to ground planning."""
     if not text:
         return []
     import re
+
     from archaeologist.utils.security import escape_like
-    
+
     words = set(re.findall(r'[A-Za-z_][A-Za-z0-9_]{3,}', text))
     stopwords = {"what", "when", "where", "which", "does", "from", "with", "this", "that", "have", "been", "were", "commit", "commits", "pull", "request", "issue", "repository", "history", "code", "file", "method", "function", "class", "architecture", "handle", "using"}
     candidates = [w for w in words if w.lower() not in stopwords]
-    
+
     if not candidates:
         return []
-    
+
     matched = []
     seen = set()
     for word in candidates:
@@ -198,13 +207,14 @@ def find_candidate_symbols(session, text: str, repo_id: Optional[str] = None, li
                     return matched
     return matched
 
-def find_candidate_forensics(session, text: str, repo_id: Optional[str] = None) -> List[str]:
+def find_candidate_forensics(session, text: str, repo_id: str | None = None) -> list[str]:
     """Extracts candidate PRs, Issues, Commit SHAs, and AST symbols matching query text."""
     if not text:
         return []
     import re
+
     from archaeologist.utils.security import escape_like
-    
+
     evidence = []
     # 1. PR / Issue numbers (e.g. #452, PR #494, Issue #486)
     pr_issue_nums = re.findall(r'#(\d+)', text)

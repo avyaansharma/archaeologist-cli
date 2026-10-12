@@ -1,13 +1,14 @@
 import os
-import sys
 import re
-from typing import Optional, List, Dict, Any
+import sys
+
 from sqlmodel import select
+
 from archaeologist.agent.state import AgentState
-from archaeologist.retrieval.embedder import Embedder
-from archaeologist.retrieval.vector_store import VectorStore
 from archaeologist.retrieval.bm25_index import BM25Index
+from archaeologist.retrieval.embedder import Embedder
 from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+from archaeologist.retrieval.vector_store import VectorStore
 from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import Chunk
 
@@ -15,13 +16,13 @@ _EMBEDDER_INSTANCE = None
 _VECTOR_STORE_INSTANCE = None
 
 SYMBOL_STOPWORDS = {
-    "http", "httpx", "python", "code", "file", "path", "test", "class", "func", "defs", 
-    "does", "how", "what", "where", "when", "why", "with", "from", "into", "request", 
-    "response", "session", "context", "global", "system", "method", "function", 
-    "module", "script", "option", "parameter", "config", "configuration", "default", 
-    "structure", "pattern", "design", "decision", "rationale", "implementation", 
-    "architecture", "hierarchy", "unify", "platform", "error", "handler", "interface", 
-    "server", "client", "common", "shared", "core", "base", "main", "init", "start", 
+    "http", "httpx", "python", "code", "file", "path", "test", "class", "func", "defs",
+    "does", "how", "what", "where", "when", "why", "with", "from", "into", "request",
+    "response", "session", "context", "global", "system", "method", "function",
+    "module", "script", "option", "parameter", "config", "configuration", "default",
+    "structure", "pattern", "design", "decision", "rationale", "implementation",
+    "architecture", "hierarchy", "unify", "platform", "error", "handler", "interface",
+    "server", "client", "common", "shared", "core", "base", "main", "init", "start",
     "stop", "close", "read", "write", "open", "save", "load", "update", "delete"
 }
 
@@ -31,10 +32,10 @@ def _get_embedder():
         _EMBEDDER_INSTANCE = Embedder()
     return _EMBEDDER_INSTANCE
 
-def _get_vector_store(dim: int, storage_path: Optional[str] = None):
+def _get_vector_store(dim: int, storage_path: str | None = None):
     global _VECTOR_STORE_INSTANCE
-    from archaeologist.storage.paths import get_default_qdrant_path
     from archaeologist.storage.context import current_qdrant_path_var
+    from archaeologist.storage.paths import get_default_qdrant_path
     target_path = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
     if _VECTOR_STORE_INSTANCE is None or getattr(_VECTOR_STORE_INSTANCE, "storage_path", None) != target_path:
         _VECTOR_STORE_INSTANCE = VectorStore(vector_size=dim, storage_path=target_path)
@@ -49,15 +50,16 @@ def sanitize_search_query(query: str) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned if cleaned else query
 
-def _apply_repo_filter(stmt, model_col, repo_id: Optional[str]):
+def _apply_repo_filter(stmt, model_col, repo_id: str | None):
     if not repo_id:
         return stmt
     clean_repo = repo_id.strip()
     clean_lower = clean_repo.lower()
     base_repo = clean_repo.split("/")[-1]
     base_lower = clean_lower.split("/")[-1]
-    from archaeologist.utils.security import escape_like
     from sqlalchemy import func
+
+    from archaeologist.utils.security import escape_like
     escaped_base = escape_like(base_repo)
     escaped_base_lower = escape_like(base_lower)
     return stmt.where(
@@ -81,8 +83,8 @@ def search_node(state: AgentState) -> dict:
     repo_id = state.get("repo_id") or plan.get("repo_id")
 
     bm25 = BM25Index()
-    from archaeologist.storage.paths import get_default_bm25_path
     from archaeologist.storage.context import current_bm25_path_var
+    from archaeologist.storage.paths import get_default_bm25_path
     custom_bm25 = current_bm25_path_var.get() or os.getenv("BM25_INDEX_PATH")
     if custom_bm25:
         bm25_path = os.path.abspath(custom_bm25)
@@ -156,7 +158,7 @@ def search_node(state: AgentState) -> dict:
                     if is_valid_commit_sha(session, sha, repo_id=repo_id):
                         escaped_sha = escape_like(sha)
                         stmt = select(Chunk).where(
-                            (Chunk.source_id.like(f"%{escaped_sha}%", escape="\\")) | 
+                            (Chunk.source_id.like(f"%{escaped_sha}%", escape="\\")) |
                             (Chunk.text.like(f"%{escaped_sha}%", escape="\\"))
                         )
                         stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
@@ -234,7 +236,7 @@ def search_node(state: AgentState) -> dict:
 
                     raw_chunks = session.exec(stmt).all()
                     sym_chunks = [
-                        c for c in raw_chunks 
+                        c for c in raw_chunks
                         if any(sym.lower() in str(s).lower() for s in (c.symbols_modified or []))
                     ]
 

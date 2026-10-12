@@ -1,14 +1,14 @@
+import json
 import os
 import sys
-import json
 import urllib.request
-from typing import List, Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Embedder:
-    def __init__(self, gemini_key: Optional[str] = None, voyage_key: Optional[str] = None, openai_key: Optional[str] = None):
+    def __init__(self, gemini_key: str | None = None, voyage_key: str | None = None, openai_key: str | None = None):
         self.gemini_keys = []
         k1 = gemini_key or os.getenv("GEMINI_API_KEY")
         if k1:
@@ -59,40 +59,43 @@ class Embedder:
         else:
             self.provider = self.model
 
-    def embed_texts(self, texts: List[str], return_success_flags: bool = False):
+    def embed_texts(self, texts: list[str], return_success_flags: bool = False):
         """Embeds a list of texts and returns a list of embeddings (list of floats).
         If return_success_flags is True, returns a tuple (embeddings, success_flags).
         """
         if not texts:
             return ([], []) if return_success_flags else []
 
+        sanitized_texts = [str(t) if t is not None else "" for t in texts]
+
         if self.model == "fastembed":
-            res = self._embed_fastembed(texts)
+            res = self._embed_fastembed(sanitized_texts)
             success = [True] * len(res)
         elif self.model == "models/gemini-embedding-001":
-            res, success = self._embed_gemini(texts)
+            res, success = self._embed_gemini(sanitized_texts)
         elif self.model == "voyage-code-2":
-            res, success = self._embed_voyage(texts)
+            res, success = self._embed_voyage(sanitized_texts)
         elif self.model == "text-embedding-3-small":
-            res, success = self._embed_openai(texts)
+            res, success = self._embed_openai(sanitized_texts)
         else:
-            res = self._embed_mock(texts)
+            res = self._embed_mock(sanitized_texts)
             success = [False] * len(res)
 
         if return_success_flags:
             return res, success
         return res
 
-    def _embed_fastembed(self, texts: List[str]) -> List[List[float]]:
+    def _embed_fastembed(self, texts: list[str]) -> list[list[float]]:
         if not hasattr(self, "_fastembed_model"):
             from fastembed import TextEmbedding
             self._fastembed_model = TextEmbedding("BAAI/bge-small-en-v1.5")
         embeddings = list(self._fastembed_model.embed(texts))
         return [e.tolist() for e in embeddings]
 
-    def _embed_gemini(self, texts: List[str]):
-        from google import genai
+    def _embed_gemini(self, texts: list[str]):
         import time
+
+        from google import genai
 
         embeddings = []
         success_flags = []
@@ -171,13 +174,13 @@ class Embedder:
 
 
 
-    def _embed_voyage(self, texts: List[str]):
+    def _embed_voyage(self, texts: list[str]):
         url = "https://api.voyageai.com/v1/embeddings"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.voyage_key}"
         }
-        
+
         embeddings = []
         success_flags = []
         for i in range(0, len(texts), 20):
@@ -188,8 +191,8 @@ class Embedder:
             }
             try:
                 req = urllib.request.Request(
-                    url, 
-                    data=json.dumps(data).encode("utf-8"), 
+                    url,
+                    data=json.dumps(data).encode("utf-8"),
                     headers=headers,
                     method="POST"
                 )
@@ -204,13 +207,13 @@ class Embedder:
                 success_flags.extend([False] * len(batch))
         return embeddings, success_flags
 
-    def _embed_openai(self, texts: List[str]):
+    def _embed_openai(self, texts: list[str]):
         url = "https://api.openai.com/v1/embeddings"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.openai_key}"
         }
-        
+
         embeddings = []
         success_flags = []
         for i in range(0, len(texts), 20):
@@ -221,8 +224,8 @@ class Embedder:
             }
             try:
                 req = urllib.request.Request(
-                    url, 
-                    data=json.dumps(data).encode("utf-8"), 
+                    url,
+                    data=json.dumps(data).encode("utf-8"),
                     headers=headers,
                     method="POST"
                 )
@@ -237,7 +240,7 @@ class Embedder:
                 success_flags.extend([False] * len(batch))
         return embeddings, success_flags
 
-    def _embed_mock(self, texts: List[str]) -> List[List[float]]:
+    def _embed_mock(self, texts: list[str]) -> list[list[float]]:
         """Fallback mock embedder returning fast deterministic unit vectors based on seeded RNG."""
         import hashlib
         import random

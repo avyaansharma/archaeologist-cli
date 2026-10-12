@@ -1,13 +1,12 @@
-import os
 import subprocess
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from sqlmodel import select
 
-from archaeologist.storage.db import get_session_context
-from archaeologist.storage.models import Commit, Chunk
-from archaeologist.mcp_server.tools import blame_explain_tool, search_history_tool
 from archaeologist.ingestion.pipeline import IngestionPipeline
+from archaeologist.mcp_server.tools import blame_explain_tool, search_history_tool
+from archaeologist.storage.db import get_session_context
+from archaeologist.storage.models import Commit
 
 
 def test_code_review_blame_explain_attaches_diff(tmp_path):
@@ -44,7 +43,7 @@ def test_code_review_blame_explain_attaches_diff(tmp_path):
 def test_code_review_search_history_storage_path_forwarding(tmp_path):
     """Verifies that search_history_tool accepts and initializes VectorStore with custom storage_path."""
     custom_qdrant_dir = str(tmp_path / "custom_qdrant_dir")
-    
+
     with patch("archaeologist.mcp_server.tools.VectorStore") as mock_vs_cls:
         mock_instance = MagicMock()
         mock_instance.search.return_value = []

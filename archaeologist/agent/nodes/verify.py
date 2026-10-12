@@ -1,7 +1,8 @@
-import sys
 import re
+import sys
+
 from archaeologist.agent.state import AgentState
-from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key, DEFAULT_MODEL
+from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 DRAFT_PROMPT = """You are a codebase archaeologist drafting a preliminary answer based on retrieved git/issue/PR evidence chunks.
 
@@ -46,7 +47,7 @@ def verify_node(state: AgentState) -> dict:
     api_key = get_gemini_api_key()
     if not api_key:
         return {
-            "draft_answer": draft or "No Gemini API key available to verify answer.",
+            "draft_answer": draft,
             "verification_passed": False,
             "unverified_claims": ["Judge unavailable: No Gemini API key available to verify answer."],
             "judge_unavailable": True
@@ -67,7 +68,7 @@ def verify_node(state: AgentState) -> dict:
     total_evidence_chars = 0
     max_evidence_chars = 16000  # ~4000 tokens safe budget to prevent prompt overflow
 
-    for c in sorted_chunks[:50]:
+    for c in sorted_chunks:
         sid = str(c.get("source_id", ""))
         if sid:
             known_shas.add(sid.lower()[:7])
@@ -79,7 +80,9 @@ def verify_node(state: AgentState) -> dict:
             if m:
                 known_prs_issues.add(m.group(1))
         rel_str = f" [Linked PRs/Issues: {rel_ids}]" if rel_ids else ""
-        line = f"[{c.get('id', '')}]{rel_str} {c.get('text', '')}"
+        raw_text = str(c.get('text', '') or "")
+        safe_text = raw_text.replace("</evidence>", "&lt;/evidence&gt;").replace("<evidence>", "&lt;evidence&gt;")
+        line = f"[{c.get('id', '')}]{rel_str} {safe_text}"
         if total_evidence_chars + len(line) > max_evidence_chars and evidence_lines:
             break
         evidence_lines.append(line)
@@ -129,9 +132,18 @@ def verify_node(state: AgentState) -> dict:
         if draft:
             cited_prs = re.findall(r'(?:PR|Issue|#)\s*#?(\d+)', draft, re.IGNORECASE)
             for pr_num in cited_prs:
-                if pr_num not in known_prs_issues and pr_num not in evidence_text:
-                    passed = False
-                    unverified.append(f"Cited reference #{pr_num} not found in retrieved repository evidence.")
+                if pr_num not in known_prs_issues:
+                    if not re.search(rf'\b(?:pr|issue|#)\s*#?{re.escape(pr_num)}\b', evidence_text, re.IGNORECASE):
+                        passed = False
+                        unverified.append(f"Cited reference #{pr_num} not found in retrieved repository evidence.")
+
+            cited_shas = re.findall(r'\b([0-9a-fA-F]{7,40})\b', draft)
+            for sha in cited_shas:
+                sha_l = sha.lower()
+                if not any(k.startswith(sha_l[:7]) or sha_l.startswith(k[:7]) for k in known_shas if len(k) >= 7):
+                    if not re.search(rf'\b{re.escape(sha_l)}\b', evidence_text.lower()):
+                        passed = False
+                        unverified.append(f"Cited commit SHA {sha} not found in retrieved repository evidence.")
 
         if not passed and not unverified:
             unverified = ["Draft answer contained claims not supported by evidence."]

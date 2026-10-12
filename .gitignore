@@ -50,10 +50,15 @@ recentbugs.md
 learning_proposal.md
 AGENTS.md
 .agents/
-.github/
 scratch/
 graphify-out/
 brag-output/
+auditfindings.md
+findings.md
+test_findings.py
+/conftest.py
+e2e_measure.py
+
 
 # Logs & Temporary Files
 *.log

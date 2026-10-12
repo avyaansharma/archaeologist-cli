@@ -1,18 +1,15 @@
 import os
-import sys
-import tempfile
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
-from sqlmodel import select
+from datetime import UTC, datetime
 
-from archaeologist.storage.db import init_db, get_session_context
-from archaeologist.storage.models import Commit, Chunk, SymbolIndex
-from archaeologist.mcp_server.tools import symbol_history_tool, blame_explain_tool
-from archaeologist.ingestion.symbol_parser import extract_modified_line_numbers_from_diff
-from archaeologist.ingestion.chunker import chunk_commit
-from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+import pytest
+
 from archaeologist.agent.nodes.follow_links import follow_links_node
+from archaeologist.ingestion.chunker import chunk_commit
+from archaeologist.ingestion.symbol_parser import extract_modified_line_numbers_from_diff
+from archaeologist.mcp_server.tools import blame_explain_tool, symbol_history_tool
+from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Chunk, Commit
 
 
 @pytest.fixture
@@ -34,7 +31,7 @@ def test_symbol_history_tool_avoids_full_orm_entity_hydration(clean_db, monkeypa
     which hydrates entire commit diffs and messages into memory. It must use SQL LIKE
     filtering and column projections.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session_context() as session:
         for i in range(10):
             session.add(Commit(
@@ -104,7 +101,7 @@ def test_chunk_commit_subchunks_preserve_causal_revert_links():
     commit_data = {
         "sha": "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0",
         "author_name": "Alice",
-        "authored_date": datetime.now(timezone.utc),
+        "authored_date": datetime.now(UTC),
         "message": "Revert accidental breaking change\n\n* Fix auth handler crash\n* Restore legacy token parser",
         "files_changed": ["auth.py"],
         "symbols_modified": ["auth.py:login"],
@@ -163,7 +160,7 @@ def test_follow_links_synchronizes_evidence_by_chunk_id(clean_db):
     """Bug 6: follow_links_node updates retrieved_chunks but fails to update evidence_by_chunk_id.
     This causes subsequent sub-question searches to re-retrieve and duplicate the same chunks.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session_context() as session:
         session.add(Chunk(
             id="linked_chunk_1",

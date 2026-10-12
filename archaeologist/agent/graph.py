@@ -1,12 +1,15 @@
 import sys
-from langgraph.graph import StateGraph, END
-from archaeologist.agent.state import AgentState
+
+from langgraph.graph import END, StateGraph
+
 from archaeologist.agent.nodes.decompose import decompose_node
+from archaeologist.agent.nodes.follow_links import follow_links_node
 from archaeologist.agent.nodes.plan import plan_node
 from archaeologist.agent.nodes.search import search_node
-from archaeologist.agent.nodes.follow_links import follow_links_node
-from archaeologist.agent.nodes.verify import verify_node
 from archaeologist.agent.nodes.synthesize import synthesize_node
+from archaeologist.agent.nodes.verify import verify_node
+from archaeologist.agent.state import AgentState
+
 
 def advance_sub_question_node(state: AgentState) -> dict:
     idx = state.get("current_sub_question_index", 0) + 1
@@ -66,7 +69,7 @@ workflow.add_conditional_edges(
 def verification_router(state: AgentState):
     if state.get("verification_passed", True):
         return "synthesize"
-    
+
     # Circuit-break retries if judge was unavailable (no API key, quota limit, 429, or judge fatal error)
     if state.get("judge_unavailable"):
         print("Agent: Verification judge unavailable (missing key/quota limit/offline). Skipping retries and proceeding directly to synthesis.", file=sys.stderr)
@@ -81,7 +84,7 @@ def verification_router(state: AgentState):
     if retries >= 2:
         print("Agent: Verification failed after maximum retries. Proceeding to synthesis.", file=sys.stderr)
         return "synthesize"
-        
+
     return "retry"
 
 workflow.add_conditional_edges(

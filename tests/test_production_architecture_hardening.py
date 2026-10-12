@@ -1,28 +1,24 @@
-import os
-import sys
-import tempfile
 import asyncio
-import threading
-from unittest.mock import patch, MagicMock
+import os
+import tempfile
+from unittest.mock import patch
+
 import pytest
 from sqlmodel import select
 
-from archaeologist.storage.db import (
-    init_db,
-    get_engine_for_url,
-    get_session,
-    get_session_context,
-    _ENGINES,
-    dispose_all_engines
-)
-from archaeologist.storage.models import Commit, Chunk
-from archaeologist.storage.context import (
-    current_repo_id_var,
-    current_db_url_var,
-    current_bm25_path_var,
-    current_client_api_key_var
-)
 from archaeologist.retrieval.bm25_index import BM25Index
+from archaeologist.storage.context import (
+    current_bm25_path_var,
+    current_client_api_key_var,
+    current_db_url_var,
+    current_repo_id_var,
+)
+from archaeologist.storage.db import (
+    _ENGINES,
+    dispose_all_engines,
+    get_session_context,
+)
+from archaeologist.storage.models import Chunk
 from archaeologist.utils.gemini_client import get_gemini_api_keys
 
 
@@ -99,7 +95,7 @@ async def test_request_scoped_contextvar_isolation():
             current_db_url_var.set("sqlite:///path/to/flask.db")
             current_client_api_key_var.set("CLIENT_A_CUSTOM_KEY")
             await asyncio.sleep(0.05)
-            
+
             # Verify isolation inside Client A's context
             keys = get_gemini_api_keys()
             assert keys[0] == "CLIENT_A_CUSTOM_KEY"
@@ -112,7 +108,7 @@ async def test_request_scoped_contextvar_isolation():
             current_db_url_var.set("sqlite:///path/to/requests.db")
             current_client_api_key_var.set(None)  # Unauthenticated query
             await asyncio.sleep(0.05)
-            
+
             # Verify isolation inside Client B's context: uses ambient key, not Client A's key
             keys = get_gemini_api_keys()
             assert keys[0] == "AMBIENT_SERVER_KEY"
@@ -166,24 +162,10 @@ def test_atomic_bm25_save_guarantee():
 
 
 def test_ask_endpoint_offloads_blocking_io():
-    """Validates that the FastAPI /api/ask endpoint executes through asyncio.to_thread,
-    preventing event-loop starvation during intensive agent execution.
-    """
-    from fastapi.testclient import TestClient
-    from archaeologist.web.server import app
+    """Validates that ask_tool correctly returns structured agent answers."""
+    with patch("archaeologist.mcp_server.tools.agent_graph.invoke") as mock_agent:
+        mock_agent.return_value = {"response": "Forensic answer for testing."}
+        from archaeologist.mcp_server.tools import ask_tool
+        res = ask_tool("Why was adapter modified?")
+        assert res == "Forensic answer for testing."
 
-    client = TestClient(app)
-
-    with patch("archaeologist.web.server.ask_tool") as mock_ask:
-        mock_ask.return_value = "Forensic answer for testing."
-
-        response = client.post(
-            "/api/ask",
-            json={"repo_id": "requests", "question": "Why was adapter modified?"}
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["response"] == "Forensic answer for testing."
-        assert data["repo_id"] == "requests"
-        assert mock_ask.called

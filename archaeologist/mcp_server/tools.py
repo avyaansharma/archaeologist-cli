@@ -1,23 +1,24 @@
-import os
-import sys
-import re
 import json
+import os
+import re
 import subprocess
-from collections import Counter, defaultdict
-from typing import List, Dict, Any, Optional
+import sys
+from typing import Any
+
 from sqlmodel import select
 
-from archaeologist.storage.db import get_session_context
-from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex
-from archaeologist.retrieval.embedder import Embedder
-from archaeologist.retrieval.vector_store import VectorStore
-from archaeologist.retrieval.bm25_index import BM25Index
-from archaeologist.retrieval.fusion import reciprocal_rank_fusion
 from archaeologist.agent.graph import agent_graph
+from archaeologist.retrieval.bm25_index import BM25Index
+from archaeologist.retrieval.embedder import Embedder
+from archaeologist.retrieval.fusion import reciprocal_rank_fusion
+from archaeologist.retrieval.vector_store import VectorStore
+from archaeologist.storage.db import get_session_context
+from archaeologist.storage.models import Chunk, Commit, Issue, PullRequest
 from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
-from archaeologist.utils.security import validate_repo_path, sanitize_file_path
+from archaeologist.utils.security import sanitize_file_path, validate_repo_path
 
-def _get_json_list(value: Any) -> List[str]:
+
+def _get_json_list(value: Any) -> list[str]:
     """Safely deseralizes JSON list fields stored in SQLite."""
     if not value:
         return []
@@ -30,18 +31,18 @@ def _get_json_list(value: Any) -> List[str]:
 
 def search_history_tool(
     query: str,
-    file_path: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    source_types: Optional[List[str]] = None,
+    file_path: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    source_types: list[str] | None = None,
     limit: int = 10,
-    repo_id: Optional[str] = None,
-    storage_path: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    repo_id: str | None = None,
+    storage_path: str | None = None
+) -> list[dict[str, Any]]:
     """Hybrid search over commit/PR/issue history for a repo."""
     bm25 = BM25Index()
-    from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
     from archaeologist.storage.context import current_bm25_path_var, current_qdrant_path_var
+    from archaeologist.storage.paths import get_default_bm25_path, get_default_qdrant_path
     custom_bm25 = current_bm25_path_var.get() or os.getenv("BM25_INDEX_PATH")
     bm25_path = custom_bm25 or get_default_bm25_path()
     sparse_hits = []
@@ -82,7 +83,7 @@ def search_history_tool(
         vector_store.close()
 
     fused_results = reciprocal_rank_fusion(dense_hits, sparse_hits, limit=limit, query=query)
-    
+
     formatted = []
     for hit in fused_results:
         payload = dict(hit["payload"])
@@ -98,13 +99,13 @@ def search_history_tool(
         })
     return formatted
 
-def find_related_discussion_tool(ref: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
+def find_related_discussion_tool(ref: str, repo_id: str | None = None) -> dict[str, Any]:
     """Given a commit SHA or PR/issue number, return linked issues, PRs, and commits."""
     result = {"commits": [], "pull_requests": [], "issues": []}
-    
+
     with get_session_context() as session:
         ref_cleaned = ref.strip().lower()
-        
+
         from archaeologist.utils.security import SHA_REGEX
         if len(ref_cleaned) >= 7 and not ref_cleaned.startswith("#") and SHA_REGEX.match(ref_cleaned):
             stmt = select(Commit).where(Commit.sha.like(f"{ref_cleaned}%"))
@@ -121,24 +122,32 @@ def find_related_discussion_tool(ref: str, repo_id: Optional[str] = None) -> Dic
                     "reverts_sha": commit.reverts_sha,
                     "superseded_by_sha": commit.superseded_by_sha
                 })
-                
+
                 stmt_chunk = select(Chunk).where(Chunk.source_type == "commit", Chunk.source_id == commit.sha)
                 stmt_chunk = _apply_repo_id_filter(stmt_chunk, Chunk.repo_id, effective_repo)
                 chunks = session.exec(stmt_chunk).all()
                 related_refs = set()
                 for c in chunks:
                     related_refs.update(c.related_ids)
-                
+
                 for r in related_refs:
+                    if not isinstance(r, str):
+                        continue
                     if r.startswith("pr#"):
-                        pr_num = int(r.split("#")[-1])
+                        try:
+                            pr_num = int(r.split("#")[-1])
+                        except ValueError:
+                            continue
                         q_pr = select(PullRequest).where(PullRequest.number == pr_num)
                         q_pr = _apply_repo_id_filter(q_pr, PullRequest.repo_id, effective_repo)
                         pr = session.exec(q_pr).first()
                         if pr:
                             result["pull_requests"].append({"number": pr.number, "title": pr.title, "state": pr.state})
                     elif r.startswith("issue#"):
-                        issue_num = int(r.split("#")[-1])
+                        try:
+                            issue_num = int(r.split("#")[-1])
+                        except ValueError:
+                            continue
                         q_iss = select(Issue).where(Issue.number == issue_num)
                         q_iss = _apply_repo_id_filter(q_iss, Issue.repo_id, effective_repo)
                         issue = session.exec(q_iss).first()
@@ -149,7 +158,7 @@ def find_related_discussion_tool(ref: str, repo_id: Optional[str] = None) -> Dic
             num_match = re.search(r'\d+', ref_cleaned)
             if num_match:
                 num = int(num_match.group(0))
-                
+
                 q_pr = select(PullRequest).where(PullRequest.number == num)
                 q_pr = _apply_repo_id_filter(q_pr, PullRequest.repo_id, repo_id)
                 pr = session.exec(q_pr).first()
@@ -168,7 +177,7 @@ def find_related_discussion_tool(ref: str, repo_id: Optional[str] = None) -> Dic
                         i = session.exec(q_i).first()
                         if i:
                             result["issues"].append({"number": i.number, "title": i.title, "state": i.state})
-                            
+
                     # Priority 1: Use pr.linked_commit_shas extracted during ingestion
                     linked_shas = set(pr.linked_commit_shas or [])
                     if linked_shas:
@@ -182,10 +191,10 @@ def find_related_discussion_tool(ref: str, repo_id: Optional[str] = None) -> Dic
                         stmt_commits = _apply_repo_id_filter(stmt_commits, Commit.repo_id, pr_repo).limit(50)
                         candidates = session.exec(stmt_commits).all()
                         linked_commits = [c for c in candidates if re.search(r'#' + re.escape(str(pr.number)) + r'\b', c.message)]
-                    
+
                     for c in linked_commits:
                         result["commits"].append({"sha": c.sha, "message": c.message, "author": c.author_name})
-                
+
                 q_iss = select(Issue).where(Issue.number == num)
                 q_iss = _apply_repo_id_filter(q_iss, Issue.repo_id, repo_id)
                 issue = session.exec(q_iss).first()
@@ -230,7 +239,7 @@ def blame_explain_tool(
     file_path: str,
     line_start: int,
     line_end: int
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Given a file and line range, return the commit history and causal explanation for why that code exists."""
     validated_repo = validate_repo_path(repo_path)
     clean_file_path = sanitize_file_path(validated_repo, file_path)
@@ -248,7 +257,7 @@ def blame_explain_tool(
     if os.path.isfile(ignore_revs):
         cmd.extend(["--ignore-revs-file", ignore_revs])
     cmd.extend(["--", clean_file_path])
-    
+
     shas = set()
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -261,47 +270,57 @@ def blame_explain_tool(
         print(f"Error running git blame: {e}", file=sys.stderr)
 
     commits_data = []
-    with get_session_context() as session:
-        for sha in shas:
-            c = session.get(Commit, sha)
-            if c:
-                commits_data.append({
-                    "sha": c.sha,
-                    "author": c.author_name,
-                    "date": c.authored_date.isoformat(),
-                    "message": c.message,
-                    "is_revert": c.is_revert
-                })
-            else:
-                # Fallback to git show for commits outside the ingested database window
-                try:
-                    show_res = subprocess.run(
-                        ["git", "-C", validated_repo, "show", "-s", "--format=%an%x1f%aI%x1f%s", sha],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace"
-                    )
-                    if show_res.returncode == 0 and "\x1f" in show_res.stdout:
-                        author, dt_str, msg = show_res.stdout.strip().split("\x1f", 2)
-                        commits_data.append({
-                            "sha": sha,
-                            "author": author,
-                            "date": dt_str,
-                            "message": msg,
-                            "is_revert": False
-                        })
-                except Exception:
-                    pass
+    found_shas = set()
+    try:
+        with get_session_context() as session:
+            for sha in shas:
+                c = session.get(Commit, sha)
+                if c:
+                    found_shas.add(sha)
+                    dt_val = c.authored_date.isoformat() if hasattr(c.authored_date, "isoformat") else str(c.authored_date)
+                    commits_data.append({
+                        "sha": c.sha,
+                        "author": c.author_name,
+                        "date": dt_val,
+                        "message": c.message,
+                        "is_revert": c.is_revert
+                    })
+    except Exception:
+        pass
 
-            # Attach concise file diff preview if available
-            if commits_data and commits_data[-1].get("sha") == sha:
-                try:
-                    diff_proc = subprocess.run(
-                        ["git", "-c", "core.quotepath=false", "-C", validated_repo, "show", "--format=", "--unified=2", sha, "--", clean_file_path],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace"
-                    )
-                    if diff_proc.returncode == 0 and diff_proc.stdout.strip():
-                        commits_data[-1]["diff"] = diff_proc.stdout.strip()[:1500]
-                except Exception:
-                    pass
+    for sha in shas:
+        if sha not in found_shas:
+            # Fallback to git show for commits outside the ingested database window or if DB is unavailable
+            try:
+                show_res = subprocess.run(
+                    ["git", "-C", validated_repo, "show", "-s", "--format=%an%x1f%aI%x1f%s", sha],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace"
+                )
+                if show_res.returncode == 0 and "\x1f" in show_res.stdout:
+                    author, dt_str, msg = show_res.stdout.strip().split("\x1f", 2)
+                    commits_data.append({
+                        "sha": sha,
+                        "author": author,
+                        "date": dt_str,
+                        "message": msg,
+                        "is_revert": False
+                    })
+            except Exception:
+                pass
+
+    # Attach concise file diff preview if available
+    for entry in commits_data:
+        c_sha = entry.get("sha")
+        if c_sha:
+            try:
+                diff_proc = subprocess.run(
+                    ["git", "-c", "core.quotepath=false", "-C", validated_repo, "show", "--format=", "--unified=2", c_sha, "--", clean_file_path],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace"
+                )
+                if diff_proc.returncode == 0 and diff_proc.stdout.strip():
+                    entry["diff"] = diff_proc.stdout.strip()[:1500]
+            except Exception:
+                pass
 
     explanation = "No commit history found for the specified lines."
     if commits_data:
@@ -328,15 +347,16 @@ def blame_explain_tool(
         "explanation": explanation
     }
 
-def _apply_repo_id_filter(query, model_col, repo_id: Optional[str]):
+def _apply_repo_id_filter(query, model_col, repo_id: str | None):
     if not repo_id:
         return query
     clean = repo_id.strip()
     clean_lower = clean.lower()
     base = clean.split("/")[-1]
     base_lower = clean_lower.split("/")[-1]
-    from archaeologist.utils.security import escape_like
     from sqlalchemy import func
+
+    from archaeologist.utils.security import escape_like
     escaped_base = escape_like(base)
     escaped_base_lower = escape_like(base_lower)
     return query.where(
@@ -350,15 +370,29 @@ def _apply_repo_id_filter(query, model_col, repo_id: Optional[str]):
 
 # Re-export lightweight analytics tools from archaeologist.storage.analytics (D21)
 from archaeologist.storage.analytics import (
+    change_coupling_tool,
     repo_hotspots_tool,
     repo_ownership_tool,
-    change_coupling_tool,
     repo_symbols_tool,
-    symbol_history_tool
+    symbol_history_tool,
 )
 
+__all__ = [
+    "search_history_tool",
+    "find_related_discussion_tool",
+    "blame_explain_tool",
+    "repo_hotspots_tool",
+    "repo_ownership_tool",
+    "change_coupling_tool",
+    "repo_symbols_tool",
+    "symbol_history_tool",
+    "ask_tool",
+    "_apply_repo_id_filter",
+]
 
-def ask_tool(question: str, repo_id: Optional[str] = None) -> str:
+
+
+def ask_tool(question: str, repo_id: str | None = None) -> str:
     """Answers a causal 'why' question about the codebase using full agentic multi-hop retrieval."""
     inputs = {
         "question": question,
@@ -374,6 +408,6 @@ def ask_tool(question: str, repo_id: Optional[str] = None) -> str:
         "retry_count": 0,
         "response": None
     }
-    
+
     final_state = agent_graph.invoke(inputs, config={"recursion_limit": 60})
     return final_state.get("response", "Could not synthesize response.")

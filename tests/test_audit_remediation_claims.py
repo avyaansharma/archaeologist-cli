@@ -1,23 +1,22 @@
 import os
-import re
-import sys
 import tomllib
-import pytest
-from datetime import datetime, timezone
-from sqlmodel import Session, select, create_engine, SQLModel
+from datetime import UTC, datetime
 
-from archaeologist.ingestion.chunker import chunk_pr, make_deterministic_chunk_id, token_count, _EncodingProxy
-from archaeologist.ingestion.revert_detector import extract_revert_sha_from_message, detect_revert_from_message
-from archaeologist.ingestion.symbol_parser import map_lines_to_symbols, extract_symbols_from_code
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from archaeologist.cli import _configure_repo_env
+from archaeologist.ingestion.chunker import _EncodingProxy, chunk_pr, make_deterministic_chunk_id, token_count
+from archaeologist.ingestion.git_parser import _get_monorepo_subpath, get_commit_diff
+from archaeologist.ingestion.revert_detector import detect_revert_from_message, extract_revert_sha_from_message
+from archaeologist.ingestion.symbol_parser import extract_symbols_from_code, map_lines_to_symbols
 from archaeologist.retrieval.bm25_index import tokenize_text
+from archaeologist.retrieval.embedder import Embedder
 from archaeologist.retrieval.fusion import reciprocal_rank_fusion
 from archaeologist.retrieval.vector_store import VectorStore
-from archaeologist.retrieval.embedder import Embedder
-from archaeologist.storage.models import RepoMeta, Chunk, Commit
+from archaeologist.storage.models import Chunk, Commit, RepoMeta
 from archaeologist.storage.paths import get_default_qdrant_path
-from archaeologist.cli import _configure_repo_env
 from archaeologist.utils.gemini_client import DEFAULT_MODEL, FALLBACK_MODELS
-from archaeologist.ingestion.git_parser import _get_monorepo_subpath, get_commit_diff
+
 
 def test_claim_1_chunk_pr_no_crash():
     pr = {
@@ -77,7 +76,7 @@ def test_claim_7_pipeline_chunk_upsert():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         cid = make_deterministic_chunk_id("commit", "c1", 0, repo_id="r1")
-        c1 = Chunk(id=cid, repo_id="r1", source_type="commit", source_id="c1", text="original text", timestamp=datetime.now(timezone.utc), embedded=True)
+        c1 = Chunk(id=cid, repo_id="r1", source_type="commit", source_id="c1", text="original text", timestamp=datetime.now(UTC), embedded=True)
         session.add(c1)
         session.commit()
 
@@ -94,8 +93,9 @@ def test_claim_7_pipeline_chunk_upsert():
         assert reloaded.embedded is False
 
 def test_claim_8_github_desc_and_since():
-    from archaeologist.ingestion.github_client import GitHubIngestionClient
     import inspect
+
+    from archaeologist.ingestion.github_client import GitHubIngestionClient
     sig_pr = inspect.signature(GitHubIngestionClient.fetch_pull_requests)
     sig_iss = inspect.signature(GitHubIngestionClient.fetch_issues)
     assert sig_pr.parameters["direction"].default == "desc"
@@ -128,7 +128,7 @@ def test_claim_10_diff_summaries_order():
 def test_claim_11_fusion_decay_and_symbol_match():
     hits_code = [{"id": "c_code", "score": 0.9, "payload": {"source_type": "code", "symbols_modified": ["UserService::authenticate"]}}]
     hits_bm25 = [{"chunk": {"id": "c_code", "source_type": "code", "symbols_modified": ["UserService::authenticate"]}}]
-    
+
     # Code chunk does not decay with age
     res = reciprocal_rank_fusion(hits_code, hits_bm25, query="authenticate")
     assert len(res) == 1
@@ -158,7 +158,7 @@ def test_claim_13_symbol_parser_inner_attribution_and_multilang():
     ts_code = "export default async function handleRequest(req) { return req; }"
     go_code = "func (s *Server) ServeHTTP(w ResponseWriter, r *Request) {}"
     java_code = "public void authenticate(User user) {}"
-    
+
     ts_syms = extract_symbols_from_code(ts_code, "handler.ts")
     assert any(s["name"] == "handleRequest" for s in ts_syms)
 
@@ -198,7 +198,6 @@ def test_claim_17_verify_provenance():
 
 def test_claim_18_embedder_key_rotation_429():
     import inspect
-    from archaeologist.retrieval.embedder import Embedder
     src = inspect.getsource(Embedder._embed_gemini)
     assert "attempt < 2" in src
     assert "exhausted_keys.add" in src
@@ -213,6 +212,7 @@ def test_claim_20_vector_store_remote_timeout():
 
 def test_claim_21_remote_reembed_isolates_repo():
     import inspect
+
     from archaeologist.retrieval.vector_store import VectorStore
     sig = inspect.signature(VectorStore.init_collection)
     assert "repo_id" in sig.parameters
@@ -249,8 +249,9 @@ def test_claim_25_sqlite_busy_timeout():
         assert res == 10000
 
 def test_arch_status_cli_runs_without_import_error(tmp_path):
-    from archaeologist.cli import app
     from typer.testing import CliRunner
+
+    from archaeologist.cli import app
     runner = CliRunner()
     res = runner.invoke(app, ["status", "--repo", str(tmp_path)])
     assert res.exit_code == 0
@@ -259,14 +260,13 @@ def test_arch_status_cli_runs_without_import_error(tmp_path):
 def test_requirements_txt_sqlmodel_pinned():
     repo_root = os.path.dirname(os.path.dirname(__file__))
     req_path = os.path.join(repo_root, "requirements.txt")
-    with open(req_path, "r", encoding="utf-8") as f:
+    with open(req_path, encoding="utf-8") as f:
         content = f.read()
     assert "sqlmodel>=0.0.39,<0.0.45" in content
 
 def test_mcp_search_history_storage_path_configured(tmp_path):
     from archaeologist.mcp_server.server import _get_mcp_repo_context
     from archaeologist.mcp_server.tools import search_history_tool
-    from archaeologist.storage.paths import get_default_qdrant_path
     os.environ["ARCHAEOLOGIST_REPO"] = str(tmp_path)
     abs_root, rid = _get_mcp_repo_context()
     assert os.environ.get("ARCHAEOLOGIST_REPO") == abs_root
@@ -276,7 +276,7 @@ def test_mcp_search_history_storage_path_configured(tmp_path):
     assert isinstance(res, list)
 
 def test_pr_incremental_comments_synced(tmp_path):
-    from archaeologist.storage.db import init_db, get_session_context
+    from archaeologist.storage.db import get_session_context, init_db
     from archaeologist.storage.models import PullRequest
     db_file = str(tmp_path / "test.db")
     init_db(f"sqlite:///{db_file}")

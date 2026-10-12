@@ -1,21 +1,20 @@
 import os
 import sys
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator, Optional, Dict
 
-from sqlmodel import SQLModel, create_engine, Session
-from sqlalchemy.engine import Engine
 from dotenv import load_dotenv
+from sqlalchemy.engine import Engine
+from sqlmodel import Session, SQLModel, create_engine
 
-from archaeologist.storage.paths import get_default_db_url
 from archaeologist.storage.context import current_db_url_var
-from archaeologist.storage.models import Commit, PullRequest, Issue, Chunk, SymbolIndex
+from archaeologist.storage.paths import get_default_db_url
 
 load_dotenv()
 
 _DB_LOCK = threading.RLock()
-_ENGINES: Dict[str, Engine] = {}
+_ENGINES: dict[str, Engine] = {}
 
 def _create_engine_for_url(url: str) -> Engine:
     if url.startswith("sqlite") and ":memory:" not in url:
@@ -49,7 +48,7 @@ def _create_engine_for_url(url: str) -> Engine:
         _run_schema_migrations(eng)
     return eng
 
-def get_engine(url: Optional[str] = None) -> Engine:
+def get_engine(url: str | None = None) -> Engine:
     """Retrieves or creates a cached Engine for the specified database URL."""
     target_url = url or current_db_url_var.get() or os.getenv("DATABASE_URL") or get_default_db_url()
     with _DB_LOCK:
@@ -63,7 +62,7 @@ def _run_schema_migrations(eng: Engine):
         with eng.connect() as conn:
             # Schema version tracking table
             conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS _schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMP);")
-            
+
             # Map of expected table columns and their SQL types
             expected_columns = {
                 "commit": {
@@ -117,7 +116,7 @@ def _run_schema_migrations(eng: Engine):
                     "updated_at": "TIMESTAMP",
                 }
             }
-            
+
             for table_name, columns in expected_columns.items():
                 try:
                     res = conn.exec_driver_sql(f'PRAGMA table_info("{table_name}");').fetchall()
@@ -148,7 +147,7 @@ def get_engine_for_url(url: str) -> Engine:
         return eng
 
 
-def init_db(db_url: Optional[str] = None):
+def init_db(db_url: str | None = None):
     """Initializes the database schema and enables SQLite WAL mode for high concurrency."""
     target_url = db_url or get_default_db_url()
     if db_url:
@@ -174,14 +173,14 @@ def dispose_all_engines():
         _ENGINES.clear()
 
 
-def get_session(db_url: Optional[str] = None) -> Session:
+def get_session(db_url: str | None = None) -> Session:
     """Returns a new SQLModel database session, dynamically syncing with active or specified db_url."""
     target_url = db_url or get_default_db_url()
     return Session(get_engine_for_url(target_url))
 
 
 @contextmanager
-def get_session_context(db_url: Optional[str] = None) -> Generator[Session, None, None]:
+def get_session_context(db_url: str | None = None) -> Generator[Session, None, None]:
     """Context manager yielding a session with connection pooling and automatic rollback."""
     target_url = db_url or get_default_db_url()
     active_engine = get_engine_for_url(target_url)

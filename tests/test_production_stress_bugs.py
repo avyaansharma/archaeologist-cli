@@ -1,18 +1,17 @@
 import os
-import sys
-import tempfile
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
+
+import pytest
 from sqlmodel import select
 
-from archaeologist.storage.db import init_db, get_session_context, engine
-from archaeologist.storage.models import Commit, Chunk, SymbolIndex, PullRequest, Issue
-from archaeologist.retrieval.vector_store import VectorStore
-from archaeologist.retrieval.embedder import Embedder
-from archaeologist.mcp_server.tools import repo_hotspots_tool, repo_ownership_tool, change_coupling_tool
-from archaeologist.ingestion.chunker import make_deterministic_chunk_id, chunk_issue, chunk_pr
+from archaeologist.ingestion.chunker import make_deterministic_chunk_id
 from archaeologist.ingestion.github_client import GitHubIngestionClient
+from archaeologist.mcp_server.tools import change_coupling_tool, repo_hotspots_tool, repo_ownership_tool
+from archaeologist.retrieval.embedder import Embedder
+from archaeologist.retrieval.vector_store import VectorStore
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Chunk, Commit, SymbolIndex
 
 
 @pytest.fixture
@@ -36,7 +35,7 @@ def test_bug1_vector_store_avoids_unbounded_table_scan_on_file_search(clean_db, 
     """
     with get_session_context() as session:
         # Seed database with dummy chunks
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(100):
             session.add(Chunk(
                 id=f"chk_{i}",
@@ -49,7 +48,7 @@ def test_bug1_vector_store_avoids_unbounded_table_scan_on_file_search(clean_db, 
             ))
 
     vs = VectorStore()
-    
+
     # Spy on session.exec inside vector_store to verify it does not fetch all chunks without WHERE/LIMIT
     executed_statements = []
     real_get_session_context = get_session_context
@@ -66,7 +65,7 @@ def test_bug1_vector_store_avoids_unbounded_table_scan_on_file_search(clean_db, 
             yield sess
 
     monkeypatch.setattr("archaeologist.storage.db.get_session_context", spy_session_context)
-    
+
     # Searching by file_path
     try:
         vs.search_chunks(
@@ -92,7 +91,7 @@ def test_bug2_analytical_tools_avoid_full_orm_entity_hydration(clean_db, monkeyp
     should NOT fetch full Commit objects (including diff_summary, raw_diff, message).
     They must use targeted column projections.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session_context() as session:
         for i in range(10):
             session.add(Commit(
@@ -139,10 +138,10 @@ def test_bug3_engine_disposal_prevents_connection_leaks(tmp_path):
     to avoid file locks and connection pool leakage.
     """
     import archaeologist.storage.db as db_mod
-    
+
     db1 = tmp_path / "leak_test_1.db"
     db2 = tmp_path / "leak_test_2.db"
-    
+
     url1 = f"sqlite:///{db1.as_posix()}"
     url2 = f"sqlite:///{db2.as_posix()}"
 
@@ -261,7 +260,7 @@ def test_bug6_deterministic_chunk_id_includes_repo_id():
     """
     id_repo_a = make_deterministic_chunk_id("file", "LICENSE", 0, "MIT License Copyright...", repo_id="repo_a")
     id_repo_b = make_deterministic_chunk_id("file", "LICENSE", 0, "MIT License Copyright...", repo_id="repo_b")
-    
+
     assert id_repo_a != id_repo_b, "Chunk ID collision across repositories! Identical files in different repos must have distinct chunk IDs."
 
 
@@ -287,14 +286,14 @@ def test_bug8_github_client_handles_429_gracefully():
     """
     client = GitHubIngestionClient("https://github.com/test_owner/test_repo", token="dummy_token")
     mock_repo = MagicMock()
-    
+
     pr1 = MagicMock()
     pr1.number = 1
     pr1.title = "Fix A"
     pr1.body = "Body A"
     pr1.state = "closed"
     pr1.user.login = "alice"
-    pr1.created_at = datetime.now(timezone.utc)
+    pr1.created_at = datetime.now(UTC)
     pr1.merged_at = None
     pr1.merge_commit_sha = None
     pr1.get_issue_comments.side_effect = Exception("429 Too Many Requests: secondary rate limit")

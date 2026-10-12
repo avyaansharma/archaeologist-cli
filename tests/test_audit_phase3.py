@@ -13,19 +13,20 @@ Validates:
 - MCP: repo_ownership_tool groups authors by author_email
 - Web: get_causal_knowledge_graph uses canonical symbol_id node keys
 """
-import os
 import json
+import os
 import subprocess
-import pytest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
-from typer.testing import CliRunner
+
+import pytest
 from sqlmodel import select
+from typer.testing import CliRunner
 
 from archaeologist.cli import app
-from archaeologist.storage.db import get_session_context, init_db
-from archaeologist.storage.models import Commit, Chunk, PullRequest, SymbolIndex
 from archaeologist.storage.context import current_db_url_var
+from archaeologist.storage.db import get_session_context, init_db
+from archaeologist.storage.models import Chunk, Commit, PullRequest, SymbolIndex
 
 
 @pytest.fixture
@@ -117,7 +118,7 @@ def test_golden_repo_end_to_end_and_cli_json(golden_repo, monkeypatch):
     from archaeologist.storage.paths import get_default_db_url
     db_url = get_default_db_url(repo_str)
     from archaeologist.storage.db import get_engine_for_url
-    engine = get_engine_for_url(db_url)
+    get_engine_for_url(db_url)
     with get_session_context(db_url) as session:
         chunks = session.exec(select(Chunk)).all()
         for c in chunks:
@@ -397,8 +398,9 @@ def test_reembed_flag_resets_chunks_in_pipeline(tmp_path):
 
 def test_repo_ownership_tool_groups_by_email():
     """repo_ownership_tool groups commits by author_email (with name fallback)."""
-    from archaeologist.mcp_server.tools import repo_ownership_tool
     import tempfile
+
+    from archaeologist.mcp_server.tools import repo_ownership_tool
 
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
@@ -449,7 +451,8 @@ def test_repo_ownership_tool_groups_by_email():
 def test_causal_graph_canonical_symbols():
     """get_causal_knowledge_graph keys symbols with canonical symbol_id preventing collisions."""
     import asyncio
-    from archaeologist.web.server import get_causal_knowledge_graph
+
+    from archaeologist.retrieval.causal_graph import get_causal_knowledge_graph
 
     sym1 = SymbolIndex(
         symbol_id="module_a.py::init",
@@ -466,7 +469,7 @@ def test_causal_graph_canonical_symbols():
         kind="function"
     )
 
-    with patch("archaeologist.web.server.get_session_context") as mock_ctx:
+    with patch("archaeologist.retrieval.causal_graph.get_session_context") as mock_ctx:
         mock_session = MagicMock()
         mock_ctx.return_value.__enter__.return_value = mock_session
         # 5 queries: revert_commits, general_commits, prs, issues, symbols
@@ -488,16 +491,17 @@ def test_causal_graph_canonical_symbols():
 
 def test_r6_multi_email_author_share_retention():
     """Audit R6: A single developer with multiple emails retains both commit counts without dict key collision."""
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from unittest.mock import MagicMock, patch
+
     from archaeologist.storage.analytics import repo_ownership_tool
     from archaeologist.storage.models import Commit
-    from unittest.mock import patch, MagicMock
 
     c1 = Commit(
         sha="1111111111111111111111111111111111111111",
         author_name="Alice Dev",
         author_email="alice@work.com",
-        authored_date=datetime.now(timezone.utc),
+        authored_date=datetime.now(UTC),
         message="work commit",
         files_changed=["main.py"]
     )
@@ -505,7 +509,7 @@ def test_r6_multi_email_author_share_retention():
         sha="2222222222222222222222222222222222222222",
         author_name="Alice Dev",
         author_email="alice@noreply.github.com",
-        authored_date=datetime.now(timezone.utc),
+        authored_date=datetime.now(UTC),
         message="personal commit",
         files_changed=["main.py"]
     )
