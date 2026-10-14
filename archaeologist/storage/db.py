@@ -50,7 +50,7 @@ def _create_engine_for_url(url: str) -> Engine:
 
 def get_engine(url: str | None = None) -> Engine:
     """Retrieves or creates a cached Engine for the specified database URL."""
-    target_url = url or current_db_url_var.get() or os.getenv("DATABASE_URL") or get_default_db_url()
+    target_url = url or get_default_db_url()
     with _DB_LOCK:
         if target_url not in _ENGINES:
             _ENGINES[target_url] = _create_engine_for_url(target_url)
@@ -150,16 +150,17 @@ def get_engine_for_url(url: str) -> Engine:
 def init_db(db_url: str | None = None):
     """Initializes the database schema and enables SQLite WAL mode for high concurrency."""
     target_url = db_url or get_default_db_url()
-    if db_url:
-        old_url = get_default_db_url()
-        current_db_url_var.set(db_url)
-        if old_url and old_url != db_url and old_url in _ENGINES:
-            try:
-                _ENGINES[old_url].dispose()
-                del _ENGINES[old_url]
-            except Exception:
-                pass
-    return get_engine_for_url(target_url)
+    with _DB_LOCK:
+        if db_url:
+            old_url = get_default_db_url()
+            current_db_url_var.set(db_url)
+            if old_url and old_url != db_url and old_url in _ENGINES:
+                try:
+                    _ENGINES[old_url].dispose()
+                    del _ENGINES[old_url]
+                except Exception:
+                    pass
+        return get_engine_for_url(target_url)
 
 
 def dispose_all_engines():

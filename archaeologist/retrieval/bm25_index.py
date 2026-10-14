@@ -50,8 +50,9 @@ class BM25Index:
 
     def fit(self, chunks: list[dict]):
         """Fits the BM25 model on a list of chunk dictionaries."""
-        self.chunks = chunks
-        tokenized_corpus = [tokenize_text(chunk.get("text")) for chunk in chunks if isinstance(chunk, dict)]
+        valid_chunks = [c for c in chunks if isinstance(c, dict)]
+        self.chunks = valid_chunks
+        tokenized_corpus = [tokenize_text(c.get("text")) for c in valid_chunks]
         if tokenized_corpus and any(len(doc) > 0 for doc in tokenized_corpus):
             self.bm25 = BM25Okapi(tokenized_corpus)
         else:
@@ -131,11 +132,12 @@ class BM25Index:
             # Temporal filters
             if dt_from or dt_to:
                 chunk_dt = _parse_ts(chunk.get("timestamp"))
-                if chunk_dt:
-                    if dt_from and chunk_dt < dt_from:
-                        continue
-                    if dt_to and chunk_dt > dt_to:
-                        continue
+                if not chunk_dt:
+                    continue
+                if dt_from and chunk_dt < dt_from:
+                    continue
+                if dt_to and chunk_dt > dt_to:
+                    continue
 
             # Structural repo_id filter
             if repo_id:
@@ -159,7 +161,7 @@ class BM25Index:
 
             if is_reverted is not None and chunk.get("is_reverted") != is_reverted:
                 continue
-            if source_types and chunk.get("source_type") not in source_types:
+            if source_types and chunk.get("source_type") not in ([source_types] if isinstance(source_types, str) else source_types):
                 continue
 
             results.append({

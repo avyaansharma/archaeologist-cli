@@ -16,8 +16,28 @@ Return a JSON object with this exact structure:
   "search_queries": [
     "query 1",
     "query 2"
-  ]
-}}"""
+  ],
+  "file_path": null,
+  "source_types": null
+}}
+
+Only set "file_path" if the question names a specific file. Only set "source_types" if the question explicitly restricts the source; allowed values: "commit", "pr", "issue", "file", "code". Otherwise leave both null."""
+
+ALLOWED_SOURCE_TYPES = {"commit", "pr", "issue", "file", "code"}
+
+
+def _normalize_filters(result: dict) -> dict:
+    """Validates LLM-provided filters; invalid values are dropped rather than silently emptying retrieval."""
+    fp = result.get("file_path")
+    fp = fp.strip() if isinstance(fp, str) and fp.strip() else None
+    st = result.get("source_types")
+    if isinstance(st, str):
+        st = [st]
+    if isinstance(st, list):
+        st = [s.strip().lower() for s in st if isinstance(s, str) and s.strip().lower() in ALLOWED_SOURCE_TYPES]
+    else:
+        st = None
+    return {"file_path": fp, "source_types": st or None}
 
 RETRY_PLAN_PROMPT = """You are a codebase archaeologist planner.
 The previous retrieval attempt failed verification because the following specific claims could not be verified from retrieved evidence:
@@ -33,17 +53,29 @@ Return a JSON object with this exact structure:
   "search_queries": [
     "query 1",
     "query 2"
-  ]
-}}"""
+  ],
+  "file_path": null,
+  "source_types": null
+}}
+
+Only set "file_path" if the question names a specific file. Only set "source_types" if the question explicitly restricts the source; allowed values: "commit", "pr", "issue", "file", "code". Otherwise leave both null."""
 
 def plan_node(state: AgentState) -> dict:
     idx = state.get("current_sub_question_index", 0)
     sub_qs = state.get("sub_questions", [])
-    current_sub_q = sub_qs[idx] if idx < len(sub_qs) else state["question"]
-
     retry_count = state.get("retry_count", 0)
     unverified = state.get("unverified_claims", [])
     repo_id = state.get("repo_id")
+
+    unverified = [str(u.get('claim', u) if isinstance(u, dict) else u) for u in (unverified or []) if u]
+
+    # On retry, target unverified claims while preserving the original question context
+    if retry_count > 0 and unverified:
+        current_sub_q = f"{state['question']} - Address unverified claims: {'; '.join(unverified)}"
+    elif idx < len(sub_qs):
+        current_sub_q = sub_qs[idx]
+    else:
+        current_sub_q = state["question"]
 
     print(f"Agent: Planning retrieval using Gemini ({DEFAULT_MODEL}) for sub-question: '{current_sub_q}' (retry={retry_count})...", file=sys.stderr)
 
@@ -58,10 +90,18 @@ def plan_node(state: AgentState) -> dict:
     except Exception as e:
         print(f"Notice: Candidate forensics lookup skipped: {e}", file=sys.stderr)
 
-
     api_key = get_gemini_api_key()
     if not api_key:
-        return {"search_queries": [current_sub_q]}
+        plan_dict = {
+            "queries": [current_sub_q],
+            "sub_question": current_sub_q,
+            "repo_id": repo_id,
+            "file_path": None,
+            "source_types": None,
+            "date_from": None,
+            "date_to": None,
+        }
+        return {"search_queries": [current_sub_q], "_current_plan": plan_dict}
 
     try:
         client = GeminiClientWrapper(api_key=api_key)
@@ -86,9 +126,32 @@ def plan_node(state: AgentState) -> dict:
             temperature=temp,
             max_output_tokens=2000
         )
-        queries = result.get("search_queries", [current_sub_q])
-        plan_dict = {"queries": queries, "sub_question": current_sub_q}
-        return {"search_queries": queries if queries else [current_sub_q], "_current_plan": plan_dict}
+        if not isinstance(result, dict):
+            result = {}
+        queries = result.get("search_queries") or [current_sub_q]
+        if not isinstance(queries, list):
+            queries = [str(queries)]
+        queries = [str(q) for q in queries if q] or [current_sub_q]
+        filters = _normalize_filters(result)
+        plan_dict = {
+            "queries": queries,
+            "sub_question": current_sub_q,
+            "repo_id": repo_id,
+            "file_path": filters["file_path"],
+            "source_types": filters["source_types"],
+            "date_from": None,
+            "date_to": None,
+        }
+        return {"search_queries": queries, "_current_plan": plan_dict}
     except Exception as e:
         print(f"Error in plan_node: {e}", file=sys.stderr)
-        return {"search_queries": [current_sub_q], "_current_plan": {"queries": [current_sub_q], "sub_question": current_sub_q}}
+        plan_dict = {
+            "queries": [current_sub_q],
+            "sub_question": current_sub_q,
+            "repo_id": repo_id,
+            "file_path": None,
+            "source_types": None,
+            "date_from": None,
+            "date_to": None,
+        }
+        return {"search_queries": [current_sub_q], "_current_plan": plan_dict}

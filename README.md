@@ -21,6 +21,8 @@
 > **Traditional Code RAG and GitHub Copilot explain *what* code does today.**  
 > **Archaeologist CLI is an autonomous forensic AI agent that uncovers *why* code exists by mining the temporal causal graph — git commit diffs, AST symbol line mappings, PR discussions, linked issues, and bidirectional revert histories.**
 
+> 💡 **Independent CLI Tool**: Archaeologist CLI (`archaeologist` / `arch`) is a dedicated, standalone command-line forensic tool and local Model Context Protocol (MCP) server. It operates completely independently on local git repositories with zero web servers, browser dashboards, or external platform dependencies.
+
 ---
 
 ## 🖥️ Terminal UI Showcase
@@ -156,6 +158,13 @@ uv sync
 pip install -e .
 ```
 
+Both `archaeologist` and its shorthand alias `arch` are immediately accessible in your terminal:
+```bash
+archaeologist --help
+# Or shorthand
+arch --help
+```
+
 ---
 
 ### 2. Interactive Setup Wizard
@@ -248,7 +257,7 @@ archaeologist symbol-history "UserService"
 
 ## 🔌 Native Model Context Protocol (MCP) Server
 
-Archaeologist CLI includes a native MCP stdio server that connects your local codebase forensic graph directly into **Claude Desktop**, **Cursor**, or any MCP-compatible environment.
+Archaeologist CLI includes a native MCP stdio server that connects your local git repository's forensic causal graph directly into **Claude Desktop**, **Cursor**, or any MCP-compatible environment.
 
 ### Claude Desktop Configuration (`claude_desktop_config.json`)
 
@@ -367,13 +376,13 @@ $$\text{Grounded Accuracy} = 0.70 \times \text{Atomic Fact Entailment} + 0.30 \t
 
 ## 🛡️ Production Hardening & Concurrency
 
-Archaeologist CLI is engineered for high-concurrency production environments and developer workstations:
+Archaeologist CLI is engineered for high-reliability developer workstations and high-concurrency terminal / MCP environments:
 
-- **ContextVar Request Isolation**: Web and API servers use `contextvars.ContextVar` for coroutine-scoped isolation, preventing environment variable race conditions across concurrent async requests.
-- **SQLite WAL Mode & Connection Pooling**: Automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on all database connections prevent lock contention and disposal thrashing.
-- **Fail-Loud Vector Writer Locks**: When the local Qdrant directory is accessed by an active MCP server or UI session, writes fail cleanly with `VectorStoreLockedError` rather than silently losing embeddings in volatile memory.
+- **ContextVar Coroutine Isolation**: CLI investigation commands and async MCP stdio query handlers use `contextvars.ContextVar` for coroutine-scoped isolation, preventing environment variable leakage or state collisions across concurrent async operations.
+- **SQLite WAL Mode & Connection Pooling**: Automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on all database connections prevent lock contention and disposal thrashing during rapid multi-hop forensic queries.
+- **Fail-Loud Vector Writer Locks**: When the local Qdrant directory is accessed by an active MCP server or concurrent CLI process, writes fail cleanly with `VectorStoreLockedError` rather than silently losing embeddings in volatile memory.
 - **Rate-Limit Resilient Agent**: Automatic quota circuit-breaking prevents unbounded retry loops when Google Gemini 429 rate limits are encountered.
-- **Tracked Git File Isolation**: Code ingestion lists files with `git ls-files`, strictly ignoring untracked `.env` files, build caches, and test artifacts.
+- **Tracked Git File Isolation**: Code ingestion strictly indexes git-tracked files using `git ls-files`, safely ignoring untracked `.env` files, build caches, and test artifacts.
 
 ---
 

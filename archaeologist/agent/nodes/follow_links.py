@@ -32,16 +32,37 @@ def _apply_repo_filter(stmt, model_col, repo_id: str | None):
 def follow_links_node(state: AgentState) -> dict:
     print("Agent: Checking cross-linked references...", file=sys.stderr)
     current_chunks = state.get("retrieved_chunks", [])
-    seen_ids = {c["id"] for c in current_chunks}
-    seen_source_ids = {c["source_id"] for c in current_chunks}
+    seen_ids = {c.get("id") for c in current_chunks if isinstance(c, dict) and c.get("id")}
+    seen_source_ids = set()
+    import re
+    pr_ref_re = re.compile(r'^(?:pr|issue|pull)?#(\d+)$', re.IGNORECASE)
+    for c in current_chunks:
+        if not isinstance(c, dict):
+            continue
+        sid = str(c.get("source_id") or "").strip()
+        if sid:
+            seen_source_ids.add(sid)
+            seen_source_ids.add(sid.lower())
+            m = pr_ref_re.match(sid)
+            if m:
+                num = m.group(1)
+                seen_source_ids.update({f"#{num}", f"pr#{num}", f"issue#{num}", f"pull#{num}"})
     repo_id = state.get("repo_id")
 
     # Collect related IDs from retrieved chunks
     related_ids_to_fetch = set()
     for chunk in current_chunks:
-        for ref in chunk.get("related_ids", []):
-            if ref not in seen_source_ids:
-                related_ids_to_fetch.add(ref)
+        if not isinstance(chunk, dict):
+            continue
+        rel = chunk.get("related_ids") or []
+        for ref in rel:
+            if not ref:
+                continue
+            ref_str = str(ref).strip()
+            ref_lower = ref_str.lower()
+            if ref_str in seen_source_ids or ref_lower in seen_source_ids:
+                continue
+            related_ids_to_fetch.add(ref_str)
 
     if not related_ids_to_fetch:
         print("No new cross-linked references to follow.", file=sys.stderr)

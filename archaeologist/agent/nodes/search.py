@@ -37,18 +37,39 @@ def _get_vector_store(dim: int, storage_path: str | None = None):
     from archaeologist.storage.context import current_qdrant_path_var
     from archaeologist.storage.paths import get_default_qdrant_path
     target_path = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
-    if _VECTOR_STORE_INSTANCE is None or getattr(_VECTOR_STORE_INSTANCE, "storage_path", None) != target_path:
+    if (
+        _VECTOR_STORE_INSTANCE is None
+        or getattr(_VECTOR_STORE_INSTANCE, "storage_path", None) != target_path
+        or getattr(_VECTOR_STORE_INSTANCE, "vector_size", None) != dim
+    ):
         _VECTOR_STORE_INSTANCE = VectorStore(vector_size=dim, storage_path=target_path)
         _VECTOR_STORE_INSTANCE.init_collection()
     return _VECTOR_STORE_INSTANCE
 
 def sanitize_search_query(query: str) -> str:
     """Strips GitHub search qualifiers and git CLI flags to prevent BM25 string matching pollution."""
-    cleaned = re.sub(r'(?:repo|is|owner|org|site|author|label):\S+', '', query, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\b(?:repo|is|owner|org|site|author|label):\S+', '', query, flags=re.IGNORECASE)
     cleaned = re.sub(r'git\s+log|--(?:grep|oneline|author|since|until|path|name-only|stat)\S*', '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'["\'\-\-]', ' ', cleaned)
+    cleaned = re.sub(r'["\']', ' ', cleaned)
+    cleaned = re.sub(r'(?:\s+|^)-+(?=\s+|$)', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned if cleaned else query
+
+def _apply_temporal_filter(stmt, model_col, date_from: str | None, date_to: str | None):
+    from datetime import datetime, timedelta
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(str(date_from)[:10])
+            stmt = stmt.where(model_col >= dt_from)
+        except Exception:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(str(date_to)[:10]) + timedelta(days=1)
+            stmt = stmt.where(model_col < dt_to)
+        except Exception:
+            pass
+    return stmt
 
 def _apply_repo_filter(stmt, model_col, repo_id: str | None):
     if not repo_id:
@@ -116,7 +137,9 @@ def search_node(state: AgentState) -> dict:
                 limit=30,
                 file_path=file_path,
                 source_types=source_types,
-                repo_id=repo_id
+                repo_id=repo_id,
+                date_from=date_from,
+                date_to=date_to
             )
             for hit in s_hits:
                 cid = hit["chunk"]["id"]
@@ -162,6 +185,7 @@ def search_node(state: AgentState) -> dict:
                             (Chunk.text.like(f"%{escaped_sha}%", escape="\\"))
                         )
                         stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
+                        stmt = _apply_temporal_filter(stmt, Chunk.timestamp, date_from, date_to)
                         stmt = stmt.limit(30)
                         exact_chunks = session.exec(stmt).all()
                         for c in exact_chunks:
@@ -192,9 +216,18 @@ def search_node(state: AgentState) -> dict:
                             (Chunk.text.like(f"%Issue #{pr_num}%", escape="\\"))
                         )
                         stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
+                        stmt = _apply_temporal_filter(stmt, Chunk.timestamp, date_from, date_to)
                         stmt = stmt.limit(30)
                         exact_chunks = session.exec(stmt).all()
                         for c in exact_chunks:
+                            rel = [str(r).lower() for r in (c.related_ids or [])]
+                            pr_matches_rel = any(
+                                r == f"pr#{pr_num}" or r == f"issue#{pr_num}" or r == f"#{pr_num}" or r == str(pr_num)
+                                for r in rel
+                            )
+                            pr_matches_text = bool(c.text and re.search(rf'(?:pr|issue|#)\s*#?{pr_num}\b', c.text, re.IGNORECASE))
+                            if not (pr_matches_rel or pr_matches_text):
+                                continue
                             if c.id not in seen_exact_ids:
                                 seen_exact_ids.add(c.id)
                                 all_exact_hits.append({
@@ -232,6 +265,7 @@ def search_node(state: AgentState) -> dict:
                     escaped_sym = escape_like(sym)
                     stmt = select(Chunk).where(Chunk.symbols_modified.like(f"%{escaped_sym}%", escape="\\"))
                     stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
+                    stmt = _apply_temporal_filter(stmt, Chunk.timestamp, date_from, date_to)
                     stmt = stmt.limit(30)
 
                     raw_chunks = session.exec(stmt).all()
@@ -270,6 +304,7 @@ def search_node(state: AgentState) -> dict:
                     escaped_kw = escape_like(kw)
                     stmt = select(Chunk).where(Chunk.text.like(f"%{escaped_kw}%", escape="\\"))
                     stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
+                    stmt = _apply_temporal_filter(stmt, Chunk.timestamp, date_from, date_to)
                     stmt = stmt.limit(10)
                     matching_chunks = session.exec(stmt).all()
                     for c in matching_chunks:
@@ -281,14 +316,15 @@ def search_node(state: AgentState) -> dict:
                                 "payload": {
                                     "id": c.id,
                                     "repo_id": c.repo_id,
-                                    "source_type": "text_fallback",
+                                    "source_type": c.source_type,
                                     "source_id": c.source_id,
                                     "text": c.text,
                                     "timestamp": c.timestamp.isoformat() if hasattr(c.timestamp, "isoformat") else c.timestamp,
                                     "file_paths": c.file_paths,
                                     "symbols_modified": c.symbols_modified,
                                     "related_ids": c.related_ids,
-                                    "is_reverted": c.is_reverted
+                                    "is_reverted": c.is_reverted,
+                                    "is_fallback": True
                                 }
                             })
 
@@ -304,7 +340,7 @@ def search_node(state: AgentState) -> dict:
     print(f"Found {len(fused_results)} relevant history chunks across {len(queries_to_run)} search queries.", file=sys.stderr)
 
     retrieved = state.get("retrieved_chunks", [])
-    evidence_map = state.get("evidence_by_chunk_id", {})
+    evidence_map = dict(state.get("evidence_by_chunk_id") or {})
 
     new_chunks = []
     for hit in fused_results:

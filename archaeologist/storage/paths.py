@@ -154,7 +154,14 @@ def save_stored_repo_meta(
                     except Exception:
                         pass
                 conn.execute(
-                    "INSERT OR REPLACE INTO repo_meta (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+                    """INSERT INTO repo_meta (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(repo_id) DO UPDATE SET
+                        repo_url = COALESCE(excluded.repo_url, repo_meta.repo_url),
+                        embedder_provider = COALESCE(excluded.embedder_provider, repo_meta.embedder_provider),
+                        embedder_dimension = COALESCE(excluded.embedder_dimension, repo_meta.embedder_dimension),
+                        last_ingested_at = COALESCE(excluded.last_ingested_at, repo_meta.last_ingested_at),
+                        updated_at = datetime('now')""",
                     (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at)
                 )
             conn.close()

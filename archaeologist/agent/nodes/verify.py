@@ -137,7 +137,10 @@ def verify_node(state: AgentState) -> dict:
                         passed = False
                         unverified.append(f"Cited reference #{pr_num} not found in retrieved repository evidence.")
 
-            cited_shas = re.findall(r'\b([0-9a-fA-F]{7,40})\b', draft)
+            cited_shas = [
+                m for m in re.findall(r'\b([0-9a-fA-F]{7,40})\b', draft)
+                if not m.isdigit() and (len(m) == 40 or any(c in "abcdefABCDEF" for c in m))
+            ]
             for sha in cited_shas:
                 sha_l = sha.lower()
                 if not any(k.startswith(sha_l[:7]) or sha_l.startswith(k[:7]) for k in known_shas if len(k) >= 7):

@@ -15,8 +15,8 @@ def reciprocal_rank_fusion(
     """Applies Time-Decay Reciprocal Rank Fusion (RRF) to merge vector and keyword search results.
     
     Incorporate:
-    1. Time-Decay RRF (Option 1): Steeper decay (lambda=0.18) for old commit diffs on architectural queries.
-    2. AST Symbol Exact Match Rank Boosting (Option 2): 2.0x score boost for active AST symbols matching query.
+    1. Time-Decay RRF (Option 1): Mild decay (lambda=0.03 default, lambda=0.01 for historical intent, floor=0.35) for older commit diffs.
+    2. AST Symbol Exact Match Rank Boosting (Option 2): 1.75x score boost for active AST symbols matching query.
     3. Zero-Latency Intent Detection (Option 3): Relax decay when query asks for historical motivation (why/revert/PR).
     """
     rrf_scores: dict[str, float] = {}
@@ -127,11 +127,12 @@ def reciprocal_rank_fusion(
     for hit in dense_hits:
         sc = float(hit.get("score") if hit.get("score") is not None else 0.0)
         cid = str(hit.get("id") or (hit.get("payload") or {}).get("id") or "")
+        payload_data = hit.get("payload") or {}
         # Exact hits: score >= 2.0 (e.g. SHA/PR matches with 3.0)
         if sc >= 2.0:
             exact_list.append(hit)
-        # Fallback hits: score 1.0 or id starts with like_
-        elif sc == 1.0 or cid.startswith("like_") or (hit.get("payload") or {}).get("source_type") == "text_fallback":
+        # Fallback hits: explicit fallback flag or prefix, or text_fallback source_type
+        elif payload_data.get("is_fallback") or cid.startswith("like_") or payload_data.get("source_type") == "text_fallback":
             fallback_list.append(hit)
         else:
             dense_vector_list.append(hit)
@@ -159,7 +160,7 @@ def reciprocal_rank_fusion(
     for rank, hit in enumerate(sorted_dense, start=1):
         raw_payload = hit.get("payload")
         payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
-        chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or str(rank)
+        chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or f"dense_{rank}"
         if "id" not in payload:
             payload["id"] = chunk_id
         add_hit(chunk_id, rank, payload, initial_weight=1.0)
@@ -174,7 +175,7 @@ def reciprocal_rank_fusion(
         chunk_data = hit.get("chunk") or {}
         if not isinstance(chunk_data, dict):
             chunk_data = {}
-        chunk_id = chunk_data.get("id") or str(rank)
+        chunk_id = chunk_data.get("id") or f"sparse_{rank}"
 
         ts = chunk_data.get("timestamp")
         ts_iso = ts.isoformat() if (ts and hasattr(ts, "isoformat")) else ts
