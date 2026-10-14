@@ -1,18 +1,17 @@
-import os
 import sqlite3
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from archaeologist.agent.nodes.plan import plan_node
-from archaeologist.agent.nodes.search import sanitize_search_query, _get_vector_store, search_node
-from archaeologist.agent.nodes.verify import verify_node
+import pytest
+
 from archaeologist.agent.nodes.follow_links import follow_links_node
+from archaeologist.agent.nodes.plan import plan_node
+from archaeologist.agent.nodes.search import _get_vector_store, sanitize_search_query, search_node
 from archaeologist.retrieval.bm25_index import BM25Index
 from archaeologist.retrieval.fusion import reciprocal_rank_fusion
 from archaeologist.storage.db import get_engine, init_db
-from archaeologist.storage.paths import get_default_db_url, save_stored_repo_meta, get_archaeologist_dir
 from archaeologist.storage.models import Chunk
+from archaeologist.storage.paths import get_default_db_url, save_stored_repo_meta
 
 
 @pytest.fixture
