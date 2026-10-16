@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12-3776AB.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 | 3.12" /></a>
+  <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/SQL-SQLite_%2B_Recursive_CTEs-003B57.svg?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite + Recursive CTEs" /></a>
   <a href="https://rich.readthedocs.io/"><img src="https://img.shields.io/badge/CLI-Typer_%2B_Rich-10B981.svg?style=for-the-badge&logo=terminal&logoColor=white" alt="Typer + Rich CLI" /></a>
   <a href="https://github.com/Qiskit/rustworkx"><img src="https://img.shields.io/badge/Topology-rustworkx-DEA584.svg?style=for-the-badge&logo=rust&logoColor=white" alt="rustworkx" /></a>
   <a href="https://langchain-ai.github.io/langgraph/"><img src="https://img.shields.io/badge/Agent-LangGraph-FF6F61.svg?style=for-the-badge" alt="LangGraph" /></a>
