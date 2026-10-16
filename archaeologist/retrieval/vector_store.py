@@ -152,7 +152,7 @@ class VectorStore:
 
                     if current_size and current_size != self.vector_size:
                         # If writable, or if recreate was explicitly requested, or if collection is a test collection, recreate
-                        if self.writable or should_recreate or "test" in self.collection_name:
+                        if self.writable or should_recreate or "test" in self.collection_name or self.storage_path == ":memory:" or self.is_in_memory_fallback:
                             print(f"Recreating collection '{self.collection_name}' due to vector size change ({current_size} -> {self.vector_size})...", file=sys.stderr)
                             if hasattr(self.client, "_client") and hasattr(self.client._client, "collections"):
                                 local_col = self.client._client.collections.get(self.collection_name)
