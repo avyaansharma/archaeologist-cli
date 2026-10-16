@@ -127,7 +127,7 @@ src/services/user.py (fetchUser)
 | **Mines Git History (*Why*)** | ❌ | ❌ | ✅ |
 | **Two-Tier Hybrid Causal Graph** | ❌ | ❌ | ✅ *(SQLite CTEs + rustworkx)* |
 | **Zero-Cost AST Diff Footprints** | ❌ | ❌ | ✅ *(Zero API calls at ingest)* |
-| **Local Vector Search (ONNX / FastEmbed)** | ❌ | ❌ | ✅ *(384-dim HNSW, CPU-local)* |
+| **Local Vector Search (ONNX / FastEmbed)** | ❌ | ❌ | ✅ *(768-dim Code ONNX, CPU-local)* |
 | **Just-In-Time Diff Expansion** | ❌ | ❌ | ✅ *(Full diffs on demand)* |
 | **4-Channel Isolated RRF Fusion** | ❌ | ❌ | ✅ *(Exact, Dense, BM25, Symbol)* |
 | **AST Symbol-Aware Line Mapping** | ❌ | Partial | ✅ *(Class & Method Level)* |
@@ -220,7 +220,7 @@ Archaeologist CLI employs a four-channel retrieval pipeline designed to prevent 
 
 ### 1. Multi-Channel Channel Isolation in RRF
 - **Exact Channel** (`weight=2.5`): Direct matches on commit SHAs, PR numbers (`#421`), and issue identifiers.
-- **Dense Vector Channel** (`weight=1.0`): Semantic retrieval via 384-dimensional FastEmbed ONNX or 3072-dimensional Gemini embeddings. High-confidence top-1 vector hits are safeguarded against score inversion.
+- **Dense Vector Channel** (`weight=1.0`): Semantic retrieval via 768-dimensional code-specialized FastEmbed ONNX (`jinaai/jina-embeddings-v2-base-code`), 384-dimensional BGE, or 3072-dimensional Gemini embeddings. High-confidence top-1 vector hits are safeguarded against score inversion.
 - **Sparse Lexical Channel** (`weight=1.0`): Rank-BM25 with token-shape normalization, exact code identifier boosting, and UTC date bounds.
 - **Symbol Channel Isolation** (`weight=0.2`): Synthetic symbol scores are kept in an isolated channel, preventing uncalibrated pseudo-scores from displacing authentic semantic hits.
 
@@ -291,7 +291,7 @@ Archaeologist CLI can operate completely offline with zero external API calls:
 # Point to your local OpenAI-compatible inference endpoint (e.g. Ollama)
 export LOCAL_LLM_URL="http://localhost:11434/v1"
 export LOCAL_LLM_MODEL="qwen2.5-coder:7b"  # or llama3.2, deepseek-coder
-export USE_FASTEMBED=true                  # Local 384-dim ONNX CPU embeddings ($0.00 cost)
+export USE_FASTEMBED=true                  # Local 768-dim code ONNX CPU embeddings ($0.00 cost)
 ```
 
 ---
@@ -458,7 +458,7 @@ $$\text{Grounded Accuracy} = 0.70 \times \text{Atomic Fact Entailment} + 0.30 \t
 Archaeologist CLI is purpose-built with privacy-first and cost-conscious engineering invariants:
 
 - **100% Local Git & Relational Storage**: All git history, AST symbol indices, and dependency edges are stored strictly inside your local workspace in SQLite (`.db`) and embedded Qdrant (`qdrant_storage/`). Zero repository source code or commit logs are uploaded to any external server during indexing or graph analysis.
-- **Zero Ingestion Cost ($0.00)**: Ingestion uses AST structural patch footprint extraction and local CPU-accelerated FastEmbed embeddings (`BAAI/bge-small-en-v1.5` via ONNX Runtime). Indexing codebases requires zero LLM API calls, zero embeddings API tokens, and zero paid subscriptions.
+- **Zero Ingestion Cost ($0.00)**: Ingestion uses AST structural patch footprint extraction and local CPU-accelerated FastEmbed embeddings (`jinaai/jina-embeddings-v2-base-code` 768-dim code & diff representations, with backwards compatibility for `BAAI/bge-small-en-v1.5` via ONNX Runtime). Indexing codebases requires zero LLM API calls, zero embeddings API tokens, and zero paid subscriptions.
 - **Just-In-Time (JIT) Diff Expansion**: Full unified diffs are extracted on demand directly from git blobs only for candidate commits during query time, ensuring massive token savings and minimal external transmission.
 - **100% Air-Gapped Local Inference Option**: Fully supports local, offline models (e.g. **Ollama**, **vLLM**, or **LM Studio**) via `LOCAL_LLM_URL="http://localhost:11434/v1"` and `USE_FASTEMBED=true`. Enables completely air-gapped forensic investigations in proprietary, classified, or zero-trust corporate codebases.
 
@@ -473,7 +473,7 @@ Archaeologist CLI is engineered for high-concurrency developer environments and 
 - **Incremental Re-Ingestion & Stale Point Purging**: Chunks use deterministic UUID5 content hashing. Unchanged files skip re-embedding, and retired file vectors are purged from Qdrant.
 - **SQLite WAL Mode & Connection Pooling**: Automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on all database connections prevent lock contention during rapid multi-hop forensic queries.
 - **Circuit-Breaker Protected Agent**: Automated quota circuit-breakers in `verify_node` prevent runaway retries during rate limit (429) events, falling back gracefully to evidence summaries.
-- **Comprehensive Test Suite & CI Matrix**: 220 tests passing across Ubuntu and Windows under Python 3.11 and 3.12 with zero linter warnings.
+- **Comprehensive Test Suite & CI Matrix**: 221 tests passing across Ubuntu and Windows under Python 3.11 and 3.12 with zero linter warnings.
 
 ---
 

@@ -121,7 +121,8 @@ def save_stored_repo_meta(
     repo_url: str | None = None,
     embedder_provider: str | None = None,
     embedder_dimension: int | None = None,
-    last_ingested_at: str | None = None
+    last_ingested_at: str | None = None,
+    embedder_model: str | None = None
 ) -> None:
     """Stores repository metadata in .archaeologist/meta.json and database repo_meta table."""
     try:
@@ -131,6 +132,7 @@ def save_stored_repo_meta(
             "repo_id": repo_id,
             "repo_url": repo_url,
             "embedder_provider": embedder_provider,
+            "embedder_model": embedder_model,
             "embedder_dimension": embedder_dimension,
             "last_ingested_at": last_ingested_at
         }

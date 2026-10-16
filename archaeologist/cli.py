@@ -46,12 +46,21 @@ def _configure_repo_env(repo_path: str | None = None, db_path: str | None = None
                 import json
                 meta_data = json.loads(meta_file.read_text(encoding="utf-8"))
                 stored_provider = meta_data.get("embedder_provider")
-                if stored_provider == "fastembed":
+                stored_dim = meta_data.get("embedder_dimension")
+                stored_model = meta_data.get("embedder_model")
+                if stored_provider == "fastembed" or stored_dim in (384, 768):
                     os.environ["USE_FASTEMBED"] = "true"
                     os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
-                elif stored_provider == "gemini":
+                    if stored_model:
+                        os.environ["FASTEMBED_MODEL"] = stored_model
+                    elif stored_dim == 384:
+                        os.environ["FASTEMBED_MODEL"] = "BAAI/bge-small-en-v1.5"
+                    elif stored_dim == 768:
+                        os.environ["FASTEMBED_MODEL"] = "jinaai/jina-embeddings-v2-base-code"
+                elif stored_provider == "gemini" or stored_dim == 3072:
                     os.environ["USE_GEMINI_EMBEDDINGS"] = "true"
                     os.environ.pop("USE_FASTEMBED", None)
+                    os.environ.pop("FASTEMBED_MODEL", None)
         except Exception:
             pass
     if db_path:

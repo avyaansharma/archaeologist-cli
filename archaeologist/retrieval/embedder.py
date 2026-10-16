@@ -27,6 +27,8 @@ class Embedder:
         embed_provider_env = os.getenv("EMBEDDER_PROVIDER", "").lower()
         use_fastembed_env = os.getenv("USE_FASTEMBED", "").lower() in ("1", "true") or embed_provider_env == "fastembed"
         use_gemini_env = os.getenv("USE_GEMINI_EMBEDDINGS", "").lower()
+        stored_dimension = None
+        stored_model = None
         # Auto-detect provider from repository metadata if no explicit override is provided
         if not embed_provider_env and not os.getenv("USE_FASTEMBED") and not os.getenv("USE_GEMINI_EMBEDDINGS"):
             try:
@@ -37,9 +39,11 @@ class Embedder:
                     meta_path = get_archaeologist_dir(active_repo) / "meta.json"
                     if meta_path.exists():
                         m_data = json.loads(meta_path.read_text(encoding="utf-8"))
-                        if m_data.get("embedder_provider") == "fastembed" or m_data.get("embedder_dimension") == 384:
+                        stored_dimension = m_data.get("embedder_dimension")
+                        stored_model = m_data.get("embedder_model")
+                        if m_data.get("embedder_provider") == "fastembed" or stored_dimension in (384, 768):
                             use_fastembed_env = True
-                        elif m_data.get("embedder_provider") == "gemini" or m_data.get("embedder_dimension") == 3072:
+                        elif m_data.get("embedder_provider") == "gemini" or stored_dimension == 3072:
                             use_gemini_env = "true"
             except Exception:
                 pass
@@ -55,6 +59,19 @@ class Embedder:
         self._exhausted_keys: set[int] = set()
         self._current_key_idx: int = 0
 
+        # Determine FastEmbed model name
+        fastembed_model_name = os.getenv("FASTEMBED_MODEL")
+        if not fastembed_model_name:
+            if stored_model and ("jina" in stored_model or "bge" in stored_model):
+                fastembed_model_name = stored_model
+            elif stored_dimension == 384:
+                fastembed_model_name = "BAAI/bge-small-en-v1.5"
+            elif stored_dimension == 768:
+                fastembed_model_name = "jinaai/jina-embeddings-v2-base-code"
+            else:
+                fastembed_model_name = "jinaai/jina-embeddings-v2-base-code"
+        self.fastembed_model_name = fastembed_model_name
+
         if use_gemini and self.gemini_keys:
             self.model = "models/gemini-embedding-001"
             self.dimension = 3072
@@ -69,8 +86,8 @@ class Embedder:
             print("Embedder initialized with OpenAI API (text-embedding-3-small).", file=sys.stderr)
         else:
             self.model = "fastembed"
-            self.dimension = 384
-            print("Embedder initialized with FastEmbed local model (BAAI/bge-small-en-v1.5).", file=sys.stderr)
+            self.dimension = 384 if "bge-small" in self.fastembed_model_name else 768
+            print(f"Embedder initialized with FastEmbed local model ({self.fastembed_model_name}).", file=sys.stderr)
 
         if self.model == "fastembed":
             self.provider = "fastembed"
@@ -120,9 +137,10 @@ class Embedder:
         return res
 
     def _embed_fastembed(self, texts: list[str]) -> list[list[float]]:
-        if not hasattr(self, "_fastembed_model"):
+        if not hasattr(self, "_fastembed_model") or getattr(self, "_fastembed_model_loaded_name", None) != self.fastembed_model_name:
             from fastembed import TextEmbedding
-            self._fastembed_model = TextEmbedding("BAAI/bge-small-en-v1.5")
+            self._fastembed_model = TextEmbedding(self.fastembed_model_name)
+            self._fastembed_model_loaded_name = self.fastembed_model_name
         embeddings = list(self._fastembed_model.embed(texts))
         return [e.tolist() for e in embeddings]
 

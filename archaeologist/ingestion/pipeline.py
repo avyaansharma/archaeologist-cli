@@ -758,6 +758,7 @@ class IngestionPipeline:
             repo_path=self.repo_path,
             repo_url=self.repo_url,
             embedder_provider=getattr(embedder, "provider", None) or getattr(embedder, "model", "gemini"),
+            embedder_model=getattr(embedder, "fastembed_model_name", None) or getattr(embedder, "model", None),
             embedder_dimension=embedder.dimension,
             last_ingested_at=datetime.now(UTC).replace(tzinfo=None).isoformat()
         )

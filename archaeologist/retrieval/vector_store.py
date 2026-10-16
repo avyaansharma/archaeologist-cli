@@ -164,14 +164,20 @@ class VectorStore:
                             self.client.delete_collection(self.collection_name)
                             self.recreated_due_to_dim_change = True
                             exists = False
-                        elif not self.writable and current_size in (384, 3072):
+                        elif not self.writable and current_size in (384, 768, 3072):
                             from archaeologist.retrieval.embedder import Embedder
                             if current_size == 384:
                                 os.environ["USE_FASTEMBED"] = "true"
+                                os.environ["FASTEMBED_MODEL"] = "BAAI/bge-small-en-v1.5"
+                                os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
+                            elif current_size == 768:
+                                os.environ["USE_FASTEMBED"] = "true"
+                                os.environ["FASTEMBED_MODEL"] = "jinaai/jina-embeddings-v2-base-code"
                                 os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
                             else:
                                 os.environ["USE_GEMINI_EMBEDDINGS"] = "true"
                                 os.environ.pop("USE_FASTEMBED", None)
+                                os.environ.pop("FASTEMBED_MODEL", None)
                             self.embedder = Embedder()
                             self.vector_size = current_size
                             self.dimension_mismatch = False
@@ -222,6 +228,11 @@ class VectorStore:
             print(f"Mismatch between vector_store.vector_size ({self.vector_size}) and actual embedding size ({actual_size}). Adjusting collection...", file=sys.stderr)
             self.vector_size = actual_size
             self.init_collection()
+        else:
+            try:
+                self.client.get_collection(self.collection_name)
+            except Exception:
+                self.init_collection()
 
         points = []
         for chunk, embedding in zip(chunks, embeddings):
