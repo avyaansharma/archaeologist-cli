@@ -10,7 +10,22 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
-    { name = "Avyaan Sharma" }
+    { name = "Avyaan Sharma" },
+]
+keywords = [
+    "code-archaeology",
+    "git-history",
+    "developer-tools",
+    "cli",
+    "ast-analysis",
+    "code-rag",
+    "langgraph",
+    "model-context-protocol",
+    "mcp-server",
+    "causal-graph",
+    "sqlite",
+    "rustworkx",
+    "qdrant",
 ]
 
 dependencies = [
@@ -38,6 +53,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/avyaansharma/archaeologist-cli"
 Repository = "https://github.com/avyaansharma/archaeologist-cli"
+Issues = "https://github.com/avyaansharma/archaeologist-cli/issues"
 
 [project.scripts]
 archaeologist = "archaeologist.cli:app"

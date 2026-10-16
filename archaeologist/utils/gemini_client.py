@@ -51,7 +51,12 @@ def get_gemini_api_keys() -> list[str]:
 
 def get_gemini_api_key() -> str | None:
     keys = get_gemini_api_keys()
-    return keys[0] if keys else None
+    if keys:
+        return keys[0]
+    local_url = os.getenv("LOCAL_LLM_URL") or os.getenv("OLLAMA_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    if local_url:
+        return "local-model"
+    return None
 
 class GeminiClientWrapper:
     _rate_limit_lock = threading.Lock()
@@ -60,14 +65,64 @@ class GeminiClientWrapper:
     _semaphore = threading.BoundedSemaphore(value=2)  # Max 2 concurrent API calls
 
     def __init__(self, api_key: str | None = None):
-        provided_key = api_key or get_gemini_api_key()
-        self.api_keys = get_gemini_api_keys()
-        if provided_key and provided_key not in self.api_keys:
-            self.api_keys.insert(0, provided_key)
-        if not self.api_keys:
-            raise ValueError("GEMINI_API_KEY environment variable is required.")
+        self.local_llm_url = os.getenv("LOCAL_LLM_URL") or os.getenv("OLLAMA_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+        self.local_llm_model = os.getenv("LOCAL_LLM_MODEL") or os.getenv("OLLAMA_MODEL") or "qwen2.5-coder:7b"
 
-        self.clients = [genai.Client(api_key=k) for k in self.api_keys]
+        provided_key = api_key or get_gemini_api_key()
+        self.api_keys = [k for k in get_gemini_api_keys() if k != "local-model"]
+        if provided_key and provided_key != "local-model" and provided_key not in self.api_keys:
+            self.api_keys.insert(0, provided_key)
+
+        if not self.api_keys and not self.local_llm_url:
+            raise ValueError("GEMINI_API_KEY environment variable is required (or set LOCAL_LLM_URL for offline local model inference).")
+
+        self.clients = [genai.Client(api_key=k) for k in self.api_keys] if self.api_keys else []
+
+    def _call_local_llm(
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_output_tokens: int = 2000,
+    ) -> str:
+        """Executes inference against a local OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, llama.cpp)."""
+        import urllib.error
+        import urllib.request
+
+        base_url = (self.local_llm_url or "").rstrip("/")
+        if not base_url.endswith("/v1"):
+            endpoint = f"{base_url}/v1/chat/completions"
+        else:
+            endpoint = f"{base_url}/chat/completions"
+
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model or self.local_llm_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_output_tokens,
+        }
+
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choices = data.get("choices", [])
+                if choices and "message" in choices[0]:
+                    return choices[0]["message"].get("content", "").strip()
+                return ""
+        except Exception as e:
+            raise RuntimeError(f"Local LLM call failed to {endpoint}: {e}") from e
 
     def _wait_for_rate_limit(self):
         """Enforces thread-safe rate throttling and interval pacing between requests."""
@@ -87,6 +142,15 @@ class GeminiClientWrapper:
         max_output_tokens: int = 2000
     ) -> str:
         """Generates text using Google Gemini API with API key rotation, model fallback, and rate throttling."""
+        if self.local_llm_url and (not self.clients or os.getenv("USE_LOCAL_LLM", "").lower() in ("1", "true")):
+            return self._call_local_llm(
+                prompt=prompt,
+                system_instruction=system_instruction,
+                model=model if model != DEFAULT_MODEL else self.local_llm_model,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
+
         config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_output_tokens,

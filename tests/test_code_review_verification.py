@@ -108,3 +108,25 @@ def test_code_review_preflight_github_token_warning(tmp_path, monkeypatch):
 
     found_warning = any("GITHUB_TOKEN not set" in m for m in reported_messages)
     assert found_warning, "Pipeline must emit a pre-flight GITHUB_TOKEN reminder"
+
+
+def test_local_llm_inference_routing(monkeypatch):
+    """Verifies that GeminiClientWrapper routes to local model endpoint when LOCAL_LLM_URL is set."""
+    from archaeologist.utils.gemini_client import GeminiClientWrapper, get_gemini_api_key
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY_SECONDARY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("LOCAL_LLM_MODEL", "qwen2.5-coder:7b")
+
+    assert get_gemini_api_key() == "local-model"
+
+    client = GeminiClientWrapper()
+    assert client.local_llm_url == "http://localhost:11434/v1"
+    assert client.local_llm_model == "qwen2.5-coder:7b"
+
+    with patch.object(client, "_call_local_llm", return_value="Local reasoning result") as mock_local:
+        res = client.generate_text("Explain why code changed")
+        assert res == "Local reasoning result"
+        mock_local.assert_called_once()
