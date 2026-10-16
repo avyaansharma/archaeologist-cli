@@ -118,6 +118,8 @@ def search_node(state: AgentState) -> dict:
 
     embedder = _get_embedder()
     vector_store = _get_vector_store(embedder.dimension)
+    if getattr(vector_store, "embedder", None) and getattr(vector_store.embedder, "dimension", None) != embedder.dimension:
+        embedder = vector_store.embedder
     if getattr(vector_store, "degraded", False):
         print("Notice: VectorStore is in degraded mode (locked by another process); using BM25/SQLite retrieval.", file=sys.stderr)
 

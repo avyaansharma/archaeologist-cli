@@ -164,6 +164,19 @@ class VectorStore:
                             self.client.delete_collection(self.collection_name)
                             self.recreated_due_to_dim_change = True
                             exists = False
+                        elif not self.writable and current_size in (384, 3072):
+                            from archaeologist.retrieval.embedder import Embedder
+                            if current_size == 384:
+                                os.environ["USE_FASTEMBED"] = "true"
+                                os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
+                            else:
+                                os.environ["USE_GEMINI_EMBEDDINGS"] = "true"
+                                os.environ.pop("USE_FASTEMBED", None)
+                            self.embedder = Embedder()
+                            self.vector_size = current_size
+                            self.dimension_mismatch = False
+                            print(f"Auto-adapted embedder to match on-disk collection dimension ({self.vector_size}).", file=sys.stderr)
+                            return
                         else:
                             print(
                                 f"Notice: Vector dimension mismatch ({current_size} on disk vs {self.vector_size} in current embedder). "

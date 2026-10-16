@@ -37,6 +37,23 @@ def _configure_repo_env(repo_path: str | None = None, db_path: str | None = None
         current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
         current_repo_path_var.set(abs_repo)
         repo_id = get_stored_repo_id(abs_repo) or resolve_repo_id(abs_repo)
+
+        # Auto-configure embedder provider from repository metadata
+        try:
+            from archaeologist.storage.paths import get_archaeologist_dir
+            meta_file = get_archaeologist_dir(abs_repo) / "meta.json"
+            if meta_file.exists():
+                import json
+                meta_data = json.loads(meta_file.read_text(encoding="utf-8"))
+                stored_provider = meta_data.get("embedder_provider")
+                if stored_provider == "fastembed":
+                    os.environ["USE_FASTEMBED"] = "true"
+                    os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
+                elif stored_provider == "gemini":
+                    os.environ["USE_GEMINI_EMBEDDINGS"] = "true"
+                    os.environ.pop("USE_FASTEMBED", None)
+        except Exception:
+            pass
     if db_path:
         abs_db = os.path.abspath(db_path)
         norm_db = abs_db.replace("\\", "/")

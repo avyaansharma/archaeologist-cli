@@ -27,6 +27,23 @@ class Embedder:
         embed_provider_env = os.getenv("EMBEDDER_PROVIDER", "").lower()
         use_fastembed_env = os.getenv("USE_FASTEMBED", "").lower() in ("1", "true") or embed_provider_env == "fastembed"
         use_gemini_env = os.getenv("USE_GEMINI_EMBEDDINGS", "").lower()
+        # Auto-detect provider from repository metadata if no explicit override is provided
+        if not embed_provider_env and not os.getenv("USE_FASTEMBED") and not os.getenv("USE_GEMINI_EMBEDDINGS"):
+            try:
+                from archaeologist.storage.context import current_repo_path_var
+                from archaeologist.storage.paths import get_archaeologist_dir
+                active_repo = current_repo_path_var.get()
+                if active_repo:
+                    meta_path = get_archaeologist_dir(active_repo) / "meta.json"
+                    if meta_path.exists():
+                        m_data = json.loads(meta_path.read_text(encoding="utf-8"))
+                        if m_data.get("embedder_provider") == "fastembed" or m_data.get("embedder_dimension") == 384:
+                            use_fastembed_env = True
+                        elif m_data.get("embedder_provider") == "gemini" or m_data.get("embedder_dimension") == 3072:
+                            use_gemini_env = "true"
+            except Exception:
+                pass
+
         use_gemini = (
             not use_fastembed_env
             and use_gemini_env not in ("0", "false")
