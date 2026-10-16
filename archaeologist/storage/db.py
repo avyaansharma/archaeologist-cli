@@ -114,6 +114,15 @@ def _run_schema_migrations(eng: Engine):
                     "value": "TEXT",
                     "created_at": "TIMESTAMP",
                     "updated_at": "TIMESTAMP",
+                },
+                "causal_edges": {
+                    "id": "INTEGER",
+                    "repo_id": "VARCHAR",
+                    "source_id": "VARCHAR",
+                    "target_id": "VARCHAR",
+                    "edge_type": "VARCHAR",
+                    "label": "VARCHAR",
+                    "highlight": "BOOLEAN",
                 }
             }
 

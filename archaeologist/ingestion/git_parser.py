@@ -1,6 +1,6 @@
 import subprocess
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from archaeologist.storage.paths import find_repo_root
@@ -95,7 +95,7 @@ def _parse_commit_record(record: str) -> dict:
     sha = fields[0].strip() if len(fields) > 0 else "unknown"
     author = fields[1].strip() if len(fields) > 1 else "unknown"
     email = fields[2].strip() if len(fields) > 2 else "unknown"
-    date_iso = fields[3].strip() if len(fields) > 3 else datetime.utcnow().isoformat()
+    date_iso = fields[3].strip() if len(fields) > 3 else datetime.now(UTC).replace(tzinfo=None).isoformat()
     message = fields[4].strip() if len(fields) > 4 else ""
 
     files_changed = []
@@ -115,7 +115,7 @@ def _parse_commit_record(record: str) -> dict:
     try:
         dt = datetime.fromisoformat(date_iso)
     except Exception:
-        dt = datetime.utcnow()
+        dt = datetime.now(UTC).replace(tzinfo=None)
 
     return {
         "sha": sha,

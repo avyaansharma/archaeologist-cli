@@ -37,18 +37,22 @@ def _configure_repo_env(repo_path: str | None = None, db_path: str | None = None
         current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
         current_repo_path_var.set(abs_repo)
         repo_id = get_stored_repo_id(abs_repo) or resolve_repo_id(abs_repo)
-    elif db_path:
+    if db_path:
         abs_db = os.path.abspath(db_path)
-        repo_dir = os.path.dirname(abs_db)
-        os.environ["ARCHAEOLOGIST_REPO"] = repo_dir
-        os.environ["DATABASE_URL"] = f"sqlite:///{abs_db}"
-        os.environ["BM25_INDEX_PATH"] = get_default_bm25_path(repo_dir)
-        os.environ["QDRANT_STORAGE_PATH"] = get_default_qdrant_path(repo_dir)
+        norm_db = abs_db.replace("\\", "/")
+        os.environ["DATABASE_URL"] = f"sqlite:///{norm_db}"
         current_db_url_var.set(os.environ["DATABASE_URL"])
-        current_bm25_path_var.set(os.environ["BM25_INDEX_PATH"])
-        current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
-        current_repo_path_var.set(repo_dir)
-        repo_id = get_stored_repo_id(db_path=abs_db)
+        if not repo_path:
+            repo_dir = os.path.dirname(abs_db)
+            os.environ["ARCHAEOLOGIST_REPO"] = repo_dir
+            os.environ["BM25_INDEX_PATH"] = get_default_bm25_path(repo_dir)
+            os.environ["QDRANT_STORAGE_PATH"] = get_default_qdrant_path(repo_dir)
+            current_bm25_path_var.set(os.environ["BM25_INDEX_PATH"])
+            current_qdrant_path_var.set(os.environ["QDRANT_STORAGE_PATH"])
+            current_repo_path_var.set(repo_dir)
+        stored_db_repo = get_stored_repo_id(db_path=abs_db)
+        if stored_db_repo and not repo_id:
+            repo_id = stored_db_repo
     return repo_id
 
 import sys
@@ -86,7 +90,7 @@ def setup():
     console = _get_console()
 
     console.print(Panel.fit(
-        "[bold cyan]🏺 Welcome to Codebase Archaeologist Setup Wizard[/bold cyan]\n"
+        "[bold cyan]\U0001f3fa Welcome to Codebase Archaeologist Setup Wizard[/bold cyan]\n"
         "Configure your keys once to use Codebase Archaeologist across any local repository.\n\n"
         "[bold]1. Google Gemini API Key[/bold] (Powers AI diff summaries, semantic embeddings, and 'arch ask')\n"
         "   Get a free key at: [cyan]https://aistudio.google.com/app/apikey[/cyan]\n\n"
@@ -215,11 +219,11 @@ def ingest(
             raise typer.Exit(1)
 
     total_repo_commits = count_commits(target_path, since=effective_since)
-    console.print(f"🏺 Starting ingestion for repository: [bold cyan]{target_path}[/bold cyan]")
+    console.print(f"\U0001f3fa Starting ingestion for repository: [bold cyan]{target_path}[/bold cyan]")
     if selected_window and selected_window.lower() in ("full", "all"):
-        console.print(f"⏳ Ingestion Window: [bold yellow]Full Repository History[/bold yellow] ([cyan]{total_repo_commits:,} commits[/cyan])")
+        console.print(f"\u23f3 Ingestion Window: [bold yellow]Full Repository History[/bold yellow] ([cyan]{total_repo_commits:,} commits[/cyan])")
     elif effective_since:
-        console.print(f"⏳ Ingestion Window: [bold yellow]{selected_window or 'custom'}[/bold yellow] ([cyan]{total_repo_commits:,} commits[/cyan] on or after {effective_since})")
+        console.print(f"\u23f3 Ingestion Window: [bold yellow]{selected_window or 'custom'}[/bold yellow] ([cyan]{total_repo_commits:,} commits[/cyan] on or after {effective_since})")
     if detected_url:
         console.print(f"🔗 Linked GitHub Remote: [green]{detected_url}[/green]")
 
@@ -247,12 +251,12 @@ def ingest(
             "Ingestion",
             total=100.0,
             completed=0.0,
-            phase_tag="🏺 [  0%]",
+            phase_tag="\U0001f3fa [  0%]",
             status_msg="Starting ingestion engine..."
         )
 
         def on_progress(phase: str, current: int, total: int, message: str, percent: float):
-            pct_str = f"🏺 [{int(percent):>3d}%]"
+            pct_str = f"\U0001f3fa [{int(percent):>3d}%]"
             progress.update(
                 main_task,
                 completed=percent,
@@ -330,21 +334,42 @@ def status(
         from sqlmodel import func, select
 
         from archaeologist.storage.db import get_session_context
-        from archaeologist.storage.models import Chunk, Commit, Issue, PullRequest, RepoMeta, SymbolIndex
+        from archaeologist.storage.models import (
+            Chunk,
+            Commit,
+            Issue,
+            PullRequest,
+            RepoMeta,
+            SymbolIndex,
+            _repo_filter,
+        )
 
         try:
             with get_session_context() as session:
-                c_count = session.exec(select(func.count(Commit.sha))).one() or 0
-                pr_count = session.exec(select(func.count(PullRequest.number))).one() or 0
-                issue_count = session.exec(select(func.count(Issue.number))).one() or 0
-                chunk_count = session.exec(select(func.count(Chunk.id))).one() or 0
-                embedded_count = session.exec(select(func.count(Chunk.id)).where(Chunk.embedded == True)).one() or 0
-                symbol_count = session.exec(select(func.count(SymbolIndex.symbol_id))).one() or 0
+                c_stmt = select(func.count(Commit.sha))
+                pr_stmt = select(func.count(PullRequest.number))
+                iss_stmt = select(func.count(Issue.number))
+                chk_stmt = select(func.count(Chunk.id))
+                emb_stmt = select(func.count(Chunk.id)).where(Chunk.embedded == True)
+                sym_stmt = select(func.count(SymbolIndex.symbol_id))
+                if repo_id:
+                    c_stmt = c_stmt.where(_repo_filter(Commit.repo_id, repo_id))
+                    pr_stmt = pr_stmt.where(_repo_filter(PullRequest.repo_id, repo_id))
+                    iss_stmt = iss_stmt.where(_repo_filter(Issue.repo_id, repo_id))
+                    chk_stmt = chk_stmt.where(_repo_filter(Chunk.repo_id, repo_id))
+                    emb_stmt = emb_stmt.where(_repo_filter(Chunk.repo_id, repo_id))
+                    sym_stmt = sym_stmt.where(_repo_filter(SymbolIndex.repo_id, repo_id))
+                c_count = session.exec(c_stmt).one() or 0
+                pr_count = session.exec(pr_stmt).one() or 0
+                issue_count = session.exec(iss_stmt).one() or 0
+                chunk_count = session.exec(chk_stmt).one() or 0
+                embedded_count = session.exec(emb_stmt).one() or 0
+                symbol_count = session.exec(sym_stmt).one() or 0
                 meta_dict = {}
                 try:
                     meta_stmt = select(RepoMeta)
                     if repo_id:
-                        meta_stmt = meta_stmt.where(RepoMeta.repo_id == repo_id)
+                        meta_stmt = meta_stmt.where(_repo_filter(RepoMeta.repo_id, repo_id))
                     meta_row = session.exec(meta_stmt).first() or session.exec(select(RepoMeta)).first()
                     if meta_row:
                         if meta_row.repo_id:
@@ -357,7 +382,7 @@ def status(
                             meta_dict["last_ingested_at"] = str(meta_row.last_ingested_at)
                         elif meta_row.created_at:
                             meta_dict["last_ingested_at"] = str(meta_row.created_at)
-                    for m in session.exec(select(RepoMeta)).all():
+                    for m in session.exec(meta_stmt).all():
                         if m.key and m.value:
                             meta_dict[m.key] = m.value
                 except Exception:
@@ -415,7 +440,7 @@ def status(
     from rich.table import Table
 
     table = Table(
-        title="🏺 Repository Index Health & Forensic Statistics",
+        title="\U0001f3fa Repository Index Health & Forensic Statistics",
         border_style="bright_blue",
         box=box.ROUNDED,
         header_style="bold bright_white on dark_blue"
@@ -452,7 +477,7 @@ def ask(
     from archaeologist.mcp_server.tools import ask_tool
     console = Console()
 
-    console.print(f"\n[bold cyan]🔍 Forensic Investigation:[/bold cyan] [bold white]{question}[/bold white]")
+    console.print(f"\n[bold cyan]\U0001f50d Forensic Investigation:[/bold cyan] [bold white]{question}[/bold white]")
     with console.status("[bold green]Running LangGraph multi-hop forensic reasoning agent...[/bold green]"):
         try:
             res = ask_tool(question, repo_id=repo_id)
@@ -463,7 +488,7 @@ def ask(
     console.print("")
     console.print(Panel(
         Markdown(res),
-        title="[bold green]🏺 Forensic Analysis & Causal Rationale[/bold green]",
+        title="[bold green]\U0001f3fa Forensic Analysis & Causal Rationale[/bold green]",
         subtitle="[dim]Grounded in git commits, diffs, AST symbols & PR discussions[/dim]",
         border_style="bright_green",
         box=box.ROUNDED,
@@ -568,7 +593,7 @@ def ownership(
     console.print(table)
     if res.get("bus_factor_risk") == "HIGH (Single Author Dominance)":
         console.print(Panel(
-            "[bold red]⚠️  High Bus Factor Risk Detected:[/bold red] A single author accounts for >60% of all changes.\n"
+            "[bold red]\u26a0\ufe0f  High Bus Factor Risk Detected:[/bold red] A single author accounts for >60% of all changes.\n"
             "[dim]Recommendation: Distribute code reviews and documentation to avoid single-point knowledge loss.[/dim]",
             border_style="bright_red",
             box=box.ROUNDED
@@ -625,6 +650,48 @@ def coupling(
         )
 
     console.print(table)
+
+@app.command("graph-topology")
+def graph_topology(
+    repo: str | None = typer.Option(None, "--repo", "-r", help="Repository path (defaults to current repo)"),
+    db_path: str | None = typer.Option(None, help="Optional SQLite database path"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Output raw JSON instead of tables")
+):
+    """Calculates whole-repository graph topology metrics (PageRank & Betweenness Centrality) via rustworkx."""
+    repo_id = _configure_repo_env(repo_path=repo, db_path=db_path)
+    from rich import box
+    from rich.table import Table
+
+    from archaeologist.storage.analytics import graph_topology_tool
+    console = _get_console()
+
+    res = graph_topology_tool(repo_id=repo_id)
+    if as_json:
+        import json
+        print(json.dumps(res, indent=2, default=str))
+        return
+
+    top_pr = res.get("top_pagerank", [])
+    top_bc = res.get("top_betweenness", [])
+
+    if not top_pr and not top_bc:
+        console.print("[bold yellow]Notice:[/bold yellow] No causal edges found in graph. Run [bold cyan]'archaeologist ingest'[/bold cyan] first.")
+        return
+
+    table_pr = Table(
+        title=f"\U0001f310 Graph Topology: Critical Nodes by PageRank ({res.get('total_nodes', 0)} nodes, {res.get('total_edges', 0)} edges)",
+        border_style="cyan",
+        box=box.ROUNDED,
+        header_style="bold bright_white on dark_cyan"
+    )
+    table_pr.add_column("Rank", justify="center", style="bold yellow", no_wrap=True)
+    table_pr.add_column("Entity / Node ID", style="bold white")
+    table_pr.add_column("PageRank Score", justify="right", style="bold green")
+
+    for idx, (node_name, score) in enumerate(top_pr[:15], 1):
+        table_pr.add_row(f"#{idx}", str(node_name), f"{score:.6f}")
+
+    console.print(table_pr)
 
 @app.command()
 def symbols(
@@ -760,7 +827,7 @@ def why(
     explanation = res.get("explanation", "No history found.")
     commits = res.get("commits", [])
 
-    console.print(f"\n[bold cyan]🔍 Causal Investigation:[/bold cyan] [bold white]{target}[/bold white]")
+    console.print(f"\n[bold cyan]\U0001f50d Causal Investigation:[/bold cyan] [bold white]{target}[/bold white]")
     if commits:
         console.print(f"[dim]Identified {len(commits)} relevant commit(s) touching lines {l_start}-{l_end}:[/dim]")
         for c in commits[:5]:
@@ -769,7 +836,7 @@ def why(
     console.print("")
     console.print(Panel(
         Markdown(explanation),
-        title="[bold green]🏺 Forensic Blame Explanation[/bold green]",
+        title="[bold green]\U0001f3fa Forensic Blame Explanation[/bold green]",
         subtitle=f"[dim]{target}[/dim]",
         border_style="bright_green",
         box=box.ROUNDED,

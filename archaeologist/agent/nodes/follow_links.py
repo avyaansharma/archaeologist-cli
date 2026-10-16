@@ -64,14 +64,37 @@ def follow_links_node(state: AgentState) -> dict:
                 continue
             related_ids_to_fetch.add(ref_str)
 
-    if not related_ids_to_fetch:
+    # Fast-path: Execute SQLite Recursive CTE multi-hop expansion on both current source_ids and related_ids
+    from archaeologist.retrieval.causal_graph import traverse_causal_chain
+    cte_seeds = set(related_ids_to_fetch)
+    for c in current_chunks:
+        if isinstance(c, dict):
+            sid = c.get("source_id")
+            if sid:
+                cte_seeds.add(str(sid).strip())
+
+    expanded_target_ids = set(related_ids_to_fetch)
+    for ref_item in list(cte_seeds)[:15]:
+        try:
+            chain = traverse_causal_chain(ref_item, repo_id=repo_id, max_depth=2, direction="both")
+            for step in chain:
+                node = step.get("target_id") or step.get("source_id")
+                if node:
+                    clean_node = str(node).strip()
+                    if clean_node not in seen_source_ids and clean_node.lower() not in seen_source_ids:
+                        expanded_target_ids.add(clean_node)
+        except Exception:
+            pass
+
+    if not expanded_target_ids:
         print("No new cross-linked references to follow.", file=sys.stderr)
         return {}
 
-    print(f"Fetching linked items: {related_ids_to_fetch}", file=sys.stderr)
+    print(f"Fetching linked items: {expanded_target_ids}", file=sys.stderr)
     new_chunks = []
+
     with get_session_context() as session:
-        for ref in related_ids_to_fetch:
+        for ref in expanded_target_ids:
             clean_ref = ref.split("#")[-1].split(":")[-1] if ("#" in ref or ":" in ref) else ref
             escaped = escape_like(clean_ref)
             ref_lower = ref.lower()
@@ -79,7 +102,9 @@ def follow_links_node(state: AgentState) -> dict:
                 ref.startswith("#") or
                 ref_lower.startswith("issue#") or
                 ref_lower.startswith("pr#") or
-                ref_lower.startswith("pull#")
+                ref_lower.startswith("pull#") or
+                ref_lower.startswith("issue:#") or
+                ref_lower.startswith("pr:#")
             )
             has_hex_alpha = any(c in "abcdefABCDEF" for c in clean_ref)
             is_sha = (not is_explicit_issue_pr) and (
@@ -109,11 +134,13 @@ def follow_links_node(state: AgentState) -> dict:
                 if c.id not in seen_ids:
                     new_chunks.append({
                         "id": c.id,
+                        "repo_id": c.repo_id,
                         "source_type": c.source_type,
                         "source_id": c.source_id,
                         "text": c.text,
                         "timestamp": c.timestamp.isoformat() if hasattr(c.timestamp, "isoformat") else c.timestamp,
                         "file_paths": c.file_paths,
+                        "symbols_modified": c.symbols_modified,
                         "related_ids": c.related_ids,
                         "is_reverted": c.is_reverted,
                         "rrf_score": 0.0

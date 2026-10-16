@@ -270,6 +270,28 @@ class VectorStore:
                     points=batch
                 )
 
+    def delete_chunks(self, chunk_ids: list[str]):
+        """Deletes stale chunks from Qdrant by their chunk IDs."""
+        if not chunk_ids:
+            return
+        point_ids = []
+        for raw_id in chunk_ids:
+            pid = raw_id
+            if isinstance(raw_id, str):
+                try:
+                    uuid.UUID(raw_id)
+                except Exception:
+                    pid = str(uuid.uuid5(uuid.NAMESPACE_URL, raw_id))
+            point_ids.append(pid)
+        try:
+            from qdrant_client.models import PointIdsList
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=PointIdsList(points=point_ids),
+            )
+        except Exception as e:
+            print(f"Warning: Failed to delete stale chunks from Qdrant: {e}", file=sys.stderr)
+
     def search_chunks(
         self,
         query_vector: list[float],

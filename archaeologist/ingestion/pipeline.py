@@ -3,7 +3,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlmodel import delete, select
@@ -42,6 +42,13 @@ from archaeologist.retrieval.bm25_index import BM25Index
 from archaeologist.retrieval.embedder import Embedder
 from archaeologist.retrieval.vector_store import VectorStore
 
+EXCLUDED_INGEST_FILES = {
+    "context.md",
+    "bugs.md",
+    "recentbugs.md",
+    "secrets.json",
+}
+
 
 class IngestionPipeline:
     def __init__(
@@ -55,7 +62,8 @@ class IngestionPipeline:
         github_token: str | None = None,
         gemini_key: str | None = None,
         reembed: bool = False,
-        enable_llm_summaries: bool = False
+        enable_llm_summaries: bool | None = None,
+        llm_summaries: bool | None = None,
     ):
         self.repo_path = repo_path
         self.repo_url = repo_url
@@ -65,7 +73,8 @@ class IngestionPipeline:
         self.github_token = github_token or os.getenv("GITHUB_TOKEN")
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
         self.reembed = reembed
-        self.enable_llm_summaries = enable_llm_summaries
+        self._explicit_disable_llm_summaries = (enable_llm_summaries is False and llm_summaries is not True)
+        self.enable_llm_summaries = bool(enable_llm_summaries or llm_summaries)
         from archaeologist.storage.paths import resolve_repo_id, save_stored_repo_meta
         if repo_id:
             self.repo_id = repo_id
@@ -92,14 +101,19 @@ class IngestionPipeline:
             current_repo_path_var,
         )
         from archaeologist.storage.paths import get_default_db_url
-        repo_db_url = get_default_db_url(self.repo_path)
+        ctx_db = current_db_url_var.get()
+        default_repo_db_url = get_default_db_url(self.repo_path)
+        if ctx_db and not ctx_db.replace("\\", "/").endswith("/.archaeologist/archaeologist.db"):
+            repo_db_url = ctx_db
+        else:
+            repo_db_url = default_repo_db_url
         current_db_url_var.set(repo_db_url)
         current_bm25_path_var.set(get_default_bm25_path(self.repo_path))
         current_qdrant_path_var.set(get_default_qdrant_path(self.repo_path))
         current_repo_path_var.set(str(self.repo_path))
 
         if self.repo_url and not self.github_token and not os.getenv("GITHUB_TOKEN"):
-            self._report_progress("init", 0, 100, "💡 Tip: GITHUB_TOKEN not set. Remote GitHub PR/Issue rate limits will apply.", 2.5)
+            self._report_progress("init", 0, 100, "Tip: GITHUB_TOKEN not set. Remote GitHub PR/Issue rate limits will apply.", 2.5)
 
         self._report_progress("init", 0, 100, "Initializing metadata database...", 3.0)
         init_db(repo_db_url)
@@ -108,7 +122,8 @@ class IngestionPipeline:
         embedder = Embedder(gemini_key=self.gemini_key)
         vector_store = VectorStore(
             vector_size=embedder.dimension,
-            storage_path=get_default_qdrant_path(self.repo_path)
+            storage_path=get_default_qdrant_path(self.repo_path),
+            writable=True
         )
         if self.reembed:
             vector_store.init_collection(force_recreate=True, repo_id=self.repo_id)
@@ -147,7 +162,7 @@ class IngestionPipeline:
 
                 # AST Symbol Extraction Pass at Historical Commit SHA
                 symbols_modified = []
-                diff_text = get_commit_diff(self.repo_path, c_data["sha"])
+                diff_text = get_commit_diff(self.repo_path, c_data["sha"], max_bytes=500_000)
                 if diff_text:
                     modified_lines_map = extract_modified_line_numbers_from_diff(diff_text)
                     for fpath, line_buckets in modified_lines_map.items():
@@ -229,17 +244,43 @@ class IngestionPipeline:
 
         self._report_progress("commits", total_commits, total_commits, f"Ingested {new_commits_count} commits into database", 35.0)
 
+        def _upsert_chunk_row(session, chunk_info: dict):
+            cid = chunk_info.get("id")
+            if not cid:
+                return
+            existing = session.get(Chunk, cid)
+            if not existing:
+                session.add(Chunk(**chunk_info))
+            else:
+                changed = (
+                    existing.text != chunk_info.get("text") or
+                    existing.is_reverted != chunk_info.get("is_reverted", False) or
+                    set(existing.related_ids or []) != set(chunk_info.get("related_ids") or []) or
+                    set(existing.symbols_modified or []) != set(chunk_info.get("symbols_modified") or []) or
+                    set(existing.file_paths or []) != set(chunk_info.get("file_paths") or [])
+                )
+                if changed:
+                    existing.text = chunk_info.get("text", "")
+                    existing.token_count = chunk_info.get("token_count", token_count(existing.text))
+                    existing.is_reverted = chunk_info.get("is_reverted", False)
+                    existing.related_ids = chunk_info.get("related_ids", [])
+                    existing.symbols_modified = chunk_info.get("symbols_modified", [])
+                    existing.file_paths = chunk_info.get("file_paths", [])
+                    existing.timestamp = chunk_info.get("timestamp", existing.timestamp)
+                    existing.embedded = False
+                    session.add(existing)
+
         # Step 1b: Codebase File Ingestion Pass
         self._report_progress("files", 0, 1, "Scanning codebase source files...", 36.0)
         all_chunks = []
+        stale_file_ids: set[str] = set()
+        stale_code_ids: set[str] = set()
 
         with get_session_context() as session:
-            # Purge previous file-source chunks for this repo so updated/deleted files stay consistent
-            del_file_stmt = delete(Chunk).where(Chunk.source_type == "file")
+            old_file_stmt = select(Chunk.id).where(Chunk.source_type == "file")
             if self.repo_id:
-                del_file_stmt = del_file_stmt.where(Chunk.repo_id == self.repo_id)
-            session.exec(del_file_stmt)
-            session.commit()
+                old_file_stmt = old_file_stmt.where(Chunk.repo_id == self.repo_id)
+            old_file_ids = set(session.exec(old_file_stmt).all())
 
             candidate_files = []
             git_dir = os.path.join(self.repo_path, ".git")
@@ -255,6 +296,9 @@ class IngestionPipeline:
                                 continue
                             line = raw_b.decode("utf-8", errors="replace")
                             rel_p = line.strip().replace("\\", "/")
+                            fname_only = os.path.basename(rel_p)
+                            if fname_only in EXCLUDED_INGEST_FILES:
+                                continue
                             if rel_p.endswith((".py", ".md", ".json", ".ts", ".js", ".yml", ".yaml")):
                                 if not any(p in ("venv", ".venv", "__pycache__", "node_modules", "dist", "build") for p in rel_p.split("/")):
                                     abs_p = os.path.join(self.repo_path, rel_p)
@@ -268,7 +312,7 @@ class IngestionPipeline:
                     dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("venv", ".venv", "__pycache__", "node_modules", "site-packages", "dist", "build", "scratch")]
                     for fname in files:
                         if fname.endswith((".py", ".md", ".json", ".ts", ".js", ".yml", ".yaml")):
-                            if fname in ("context.md", "bugs.md", "recentbugs.md", "secrets.json"):
+                            if fname in EXCLUDED_INGEST_FILES:
                                 continue
                             abs_fpath = os.path.join(root, fname)
                             rel_fpath = os.path.relpath(abs_fpath, self.repo_path).replace("\\", "/")
@@ -279,29 +323,45 @@ class IngestionPipeline:
                     with open(abs_fpath, encoding="utf-8", errors="ignore") as f:
                         content = f.read()
                     if content.strip():
-                        chunk_id = make_deterministic_chunk_id("file", rel_fpath, 0, content, repo_id=self.repo_id)
-                        chunk_text = f"File {rel_fpath}:\n{content[:3000]}"
                         try:
-                            mtime_ts = datetime.utcfromtimestamp(os.path.getmtime(abs_fpath))
+                            mtime_ts = datetime.fromtimestamp(os.path.getmtime(abs_fpath), UTC).replace(tzinfo=None)
                         except Exception:
-                            mtime_ts = datetime.utcnow()
-                        all_chunks.append({
-                            "id": chunk_id,
-                            "repo_id": self.repo_id,
-                            "source_type": "file",
-                            "source_id": rel_fpath,
-                            "text": chunk_text,
-                            "timestamp": mtime_ts,
-                            "file_paths": [rel_fpath],
-                            "symbols_modified": [],
-                            "related_ids": [],
-                            "is_reverted": False,
-                            "token_count": token_count(chunk_text),
-                            "embedded": False
-                        })
+                            mtime_ts = datetime.now(UTC).replace(tzinfo=None)
+
+                        if rel_fpath.endswith(".py") or len(content) <= 3000:
+                            slices = [(0, content[:3000])]
+                        else:
+                            slices = [
+                                (idx, content[start:start + 3000])
+                                for idx, start in enumerate(range(0, len(content), 3000))
+                            ]
+
+                        for chunk_idx, part_text in slices:
+                            chunk_id = make_deterministic_chunk_id("file", rel_fpath, chunk_idx, part_text, repo_id=self.repo_id)
+                            chunk_text = f"File {rel_fpath}:\n{part_text}"
+                            c_dict = {
+                                "id": chunk_id,
+                                "repo_id": self.repo_id,
+                                "source_type": "file",
+                                "source_id": rel_fpath,
+                                "text": chunk_text,
+                                "timestamp": mtime_ts,
+                                "file_paths": [rel_fpath],
+                                "symbols_modified": [],
+                                "related_ids": [],
+                                "is_reverted": False,
+                                "token_count": token_count(chunk_text),
+                                "embedded": False,
+                            }
+                            all_chunks.append(c_dict)
+                            _upsert_chunk_row(session, c_dict)
                 except Exception:
                     pass
-            session.add_all([Chunk(**c) for c in all_chunks])
+
+            new_file_ids = {c["id"] for c in all_chunks}
+            stale_file_ids = old_file_ids - new_file_ids
+            if stale_file_ids:
+                session.exec(delete(Chunk).where(Chunk.id.in_(stale_file_ids)))
             session.commit()
         self._report_progress("files", len(all_chunks), len(all_chunks) or 1, f"Extracted {len(all_chunks)} source code files", 38.0)
 
@@ -369,7 +429,7 @@ class IngestionPipeline:
                         try:
                             return datetime.fromisoformat(cleaned)
                         except Exception:
-                            return datetime.utcnow()
+                            return datetime.now(UTC).replace(tzinfo=None)
                     return None
 
                 with get_session_context() as session:
@@ -379,7 +439,7 @@ class IngestionPipeline:
                             PullRequest.number == pr_data["number"]
                         )
                         pr_obj = session.exec(pr_stmt).first()
-                        c_at = _parse_iso_dt(pr_data.get("created_at")) or datetime.utcnow()
+                        c_at = _parse_iso_dt(pr_data.get("created_at")) or datetime.now(UTC).replace(tzinfo=None)
                         m_at = _parse_iso_dt(pr_data.get("merged_at"))
                         m_sha = pr_data.get("merge_commit_sha") or pr_data.get("merged_commit_sha")
                         if not pr_obj:
@@ -420,7 +480,7 @@ class IngestionPipeline:
                             Issue.number == issue_data["number"]
                         )
                         issue_obj = session.exec(iss_stmt).first()
-                        c_at = _parse_iso_dt(issue_data.get("created_at")) or datetime.utcnow()
+                        c_at = _parse_iso_dt(issue_data.get("created_at")) or datetime.now(UTC).replace(tzinfo=None)
                         cl_at = _parse_iso_dt(issue_data.get("closed_at"))
                         if not issue_obj:
                             issue_obj = Issue(
@@ -491,16 +551,19 @@ class IngestionPipeline:
                             pr_by_commit[c.sha] = p.number
 
             diff_summaries = {}
-            is_d18_test = getattr(LLMSummarizer.summarize_diff_batch, "__name__", "") == "mock_summarize_batch"
+            is_mocked_summarizer = (
+                LLMSummarizer.summarize_diff_batch is not _ORIGINAL_SUMMARIZE_DIFF_BATCH
+                or getattr(LLMSummarizer, "__name__", "") != "LLMSummarizer"
+            )
             should_run_llm_summaries = (
                 self.enable_llm_summaries
                 or os.getenv("ENABLE_LLM_SUMMARIES", "").lower() in ("1", "true")
-                or is_d18_test
+                or (is_mocked_summarizer and not self._explicit_disable_llm_summaries)
             )
 
             if should_run_llm_summaries:
                 eligible_diffs = []
-                for c in all_commits[:100]:
+                for c in all_commits:
                     if c.diff_summary:
                         continue
                     if 0 < len(c.files_changed) <= 20:
@@ -518,7 +581,10 @@ class IngestionPipeline:
                     diff_summaries.update(batch_res)
                     # Persist generated summaries to database to avoid re-generating on future runs
                     for s_sha, s_text in batch_res.items():
-                        c_obj = session.get(Commit, s_sha)
+                        c_stmt = select(Commit).where(Commit.sha == s_sha)
+                        if self.repo_id:
+                            c_stmt = c_stmt.where(Commit.repo_id == self.repo_id)
+                        c_obj = session.exec(c_stmt).first()
                         if c_obj:
                             c_obj.diff_summary = s_text
                             session.add(c_obj)
@@ -529,30 +595,7 @@ class IngestionPipeline:
                 self._report_progress("diffs", 1, 1, "Using zero-cost AST structural patch footprint & HNSW vector retrieval (skipping diff LLM calls)", 48.0)
 
             def upsert_chunk(chunk_info: dict):
-                cid = chunk_info.get("id")
-                if not cid:
-                    return
-                existing = session.get(Chunk, cid)
-                if not existing:
-                    session.add(Chunk(**chunk_info))
-                else:
-                    changed = (
-                        existing.text != chunk_info.get("text") or
-                        existing.is_reverted != chunk_info.get("is_reverted", False) or
-                        set(existing.related_ids or []) != set(chunk_info.get("related_ids") or []) or
-                        set(existing.symbols_modified or []) != set(chunk_info.get("symbols_modified") or []) or
-                        set(existing.file_paths or []) != set(chunk_info.get("file_paths") or [])
-                    )
-                    if changed:
-                        existing.text = chunk_info.get("text", "")
-                        existing.token_count = chunk_info.get("token_count", token_count(existing.text))
-                        existing.is_reverted = chunk_info.get("is_reverted", False)
-                        existing.related_ids = chunk_info.get("related_ids", [])
-                        existing.symbols_modified = chunk_info.get("symbols_modified", [])
-                        existing.file_paths = chunk_info.get("file_paths", [])
-                        existing.timestamp = chunk_info.get("timestamp", existing.timestamp)
-                        existing.embedded = False
-                        session.add(existing)
+                _upsert_chunk_row(session, chunk_info)
 
             for c in all_commits:
                 summary = diff_summaries.get(c.sha) or c.diff_summary
@@ -619,16 +662,20 @@ class IngestionPipeline:
                 for chunk_info in issue_chunks:
                     upsert_chunk(chunk_info)
 
-            # Purge previous code chunks so modified/deleted files are cleanly re-chunked
-            del_code_stmt = delete(Chunk).where(Chunk.source_type == "code")
+            # Upsert code chunks and delete only removed code chunk IDs
+            old_code_stmt = select(Chunk.id).where(Chunk.source_type == "code")
             if self.repo_id:
-                del_code_stmt = del_code_stmt.where(Chunk.repo_id == self.repo_id)
-            session.exec(del_code_stmt)
-            session.commit()
+                old_code_stmt = old_code_stmt.where(Chunk.repo_id == self.repo_id)
+            old_code_ids = set(session.exec(old_code_stmt).all())
 
             code_chunks = chunk_codebase(self.repo_path, repo_id=self.repo_id)
             for chunk_info in code_chunks:
                 upsert_chunk(chunk_info)
+
+            new_code_ids = {c["id"] for c in code_chunks if c.get("id")}
+            stale_code_ids = old_code_ids - new_code_ids
+            if stale_code_ids:
+                session.exec(delete(Chunk).where(Chunk.id.in_(stale_code_ids)))
 
             session.commit()
 
@@ -690,6 +737,10 @@ class IngestionPipeline:
         else:
             vector_store.init_collection(repo_id=self.repo_id)
 
+        stale_vector_ids = list(stale_file_ids | stale_code_ids)
+        if stale_vector_ids:
+            vector_store.delete_chunks(stale_vector_ids)
+
         # If dimension mismatch caused collection recreation or reembed requested, reset embedded in SQLite
         if getattr(vector_store, "recreated_due_to_dim_change", False) or self.reembed:
             with get_session_context() as session:
@@ -708,7 +759,7 @@ class IngestionPipeline:
             repo_url=self.repo_url,
             embedder_provider=getattr(embedder, "provider", None) or getattr(embedder, "model", "gemini"),
             embedder_dimension=embedder.dimension,
-            last_ingested_at=datetime.utcnow().isoformat()
+            last_ingested_at=datetime.now(UTC).replace(tzinfo=None).isoformat()
         )
 
         with get_session_context() as session:
@@ -766,6 +817,7 @@ class IngestionPipeline:
             vector_store.close()
         else:
             self._report_progress("embeddings", 1, 1, "All chunks already indexed in vector store", 98.0)
+            vector_store.close()
 
         self._report_progress("complete", 1, 1, "Ingestion completed successfully!", 100.0)
 

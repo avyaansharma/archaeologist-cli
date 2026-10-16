@@ -2,7 +2,7 @@ import ast
 import os
 import subprocess
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import tiktoken
 
@@ -173,7 +173,7 @@ def chunk_issue(issue: dict, repo_id: str | None = None) -> list[dict]:
         truncated_body = enc.decode(enc.encode(body_text)[:300])
         issue_start = f"[Issue #{issue['number']} - '{issue['title']}' created by {author_name}]\n{truncated_body}..."
 
-    created_at = issue.get("created_at") or datetime.utcnow()
+    created_at = issue.get("created_at") or datetime.now(UTC).replace(tzinfo=None)
 
     chunk_id_head = make_deterministic_chunk_id("issue", source_id, 0, issue_start, repo_id=actual_repo_id)
     chunks.append({
@@ -247,7 +247,7 @@ def chunk_pr(pr: dict, repo_id: str | None = None) -> list[dict]:
         truncated_body = enc.decode(enc.encode(body_text)[:300])
         pr_start = f"[PR #{pr['number']} - '{pr['title']}' created by {author_name}]\n{truncated_body}..."
 
-    created_at = pr.get("created_at") or datetime.utcnow()
+    created_at = pr.get("created_at") or datetime.now(UTC).replace(tzinfo=None)
 
     chunk_id_head = make_deterministic_chunk_id("pr", source_id, 0, pr_start, repo_id=actual_repo_id)
     chunks.append({
@@ -495,7 +495,7 @@ def chunk_codebase(repo_path: str, repo_id: str | None = None) -> list[dict]:
                                 "source_type": "code",
                                 "source_id": rel_path,
                                 "text": header_chunk_text,
-                                "timestamp": datetime.utcnow(),
+                                "timestamp": datetime.now(UTC).replace(tzinfo=None),
                                 "file_paths": [rel_path],
                                 "symbols_modified": list(dict.fromkeys(header_symbols)),
                                 "is_reverted": False,
@@ -527,7 +527,7 @@ def chunk_codebase(repo_path: str, repo_id: str | None = None) -> list[dict]:
                                     "source_type": "code",
                                     "source_id": rel_path,
                                     "text": method_chunk_text,
-                                    "timestamp": datetime.utcnow(),
+                                    "timestamp": datetime.now(UTC).replace(tzinfo=None),
                                     "file_paths": [rel_path],
                                     "symbols_modified": [node.name, m.name],
                                     "is_reverted": False,
@@ -556,7 +556,7 @@ def chunk_codebase(repo_path: str, repo_id: str | None = None) -> list[dict]:
                                 "source_type": "code",
                                 "source_id": rel_path,
                                 "text": chunk_text,
-                                "timestamp": datetime.utcnow(),
+                                "timestamp": datetime.now(UTC).replace(tzinfo=None),
                                 "file_paths": [rel_path],
                                 "symbols_modified": list(dict.fromkeys(chunk_symbols)),
                                 "is_reverted": False,
@@ -573,7 +573,7 @@ def chunk_codebase(repo_path: str, repo_id: str | None = None) -> list[dict]:
                         "source_type": "code",
                         "source_id": rel_path,
                         "text": chunk_text,
-                        "timestamp": datetime.utcnow(),
+                        "timestamp": datetime.now(UTC).replace(tzinfo=None),
                         "file_paths": [rel_path],
                         "symbols_modified": symbols_found,
                         "is_reverted": False,

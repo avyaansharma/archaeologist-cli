@@ -5,8 +5,8 @@ from sqlmodel import JSON, Column, Field, SQLModel, select
 
 
 class Commit(SQLModel, table=True):
-    sha: str = Field(primary_key=True)
-    repo_id: str | None = Field(default=None, index=True)
+    repo_id: str = Field(default="", primary_key=True, index=True)
+    sha: str = Field(primary_key=True, index=True)
     author_name: str
     author_email: str
     authored_date: datetime
@@ -22,6 +22,8 @@ class Commit(SQLModel, table=True):
     raw_diff_truncated: str | None = None   # first N chars of diff, for small diffs store full
 
     def __init__(self, **data):
+        if data.get("repo_id") is None:
+            data["repo_id"] = ""
         ad = data.get("authored_date")
         if isinstance(ad, datetime) and ad.tzinfo is not None:
             data["authored_date"] = ad.astimezone(UTC).replace(tzinfo=None)
@@ -37,8 +39,8 @@ class RepoMeta(SQLModel, table=True):
     last_ingested_at: datetime | None = None
     key: str | None = None
     value: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 
 class PullRequest(SQLModel, table=True):
     repo_id: str = Field(default="", primary_key=True, index=True)
@@ -106,6 +108,22 @@ class SymbolIndex(SQLModel, table=True):
         if data.get("repo_id") is None:
             data["repo_id"] = ""
         super().__init__(**data)
+
+class CausalEdge(SQLModel, table=True):
+    __tablename__ = "causal_edges"
+    id: int | None = Field(default=None, primary_key=True)
+    repo_id: str = Field(default="", index=True)
+    source_id: str = Field(index=True)
+    target_id: str = Field(index=True)
+    edge_type: str = Field(index=True)  # 'resolves', 'merges', 'reverts', 'superseded_by', 'modifies'
+    label: str = Field(default="")
+    highlight: bool = Field(default=False)
+
+    def __init__(self, **data):
+        if data.get("repo_id") is None:
+            data["repo_id"] = ""
+        super().__init__(**data)
+
 
 def is_valid_commit_sha(session, sha_str: str, repo_id: str | None = None) -> bool:
     if not sha_str or len(sha_str) < 7:

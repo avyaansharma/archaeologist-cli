@@ -73,8 +73,22 @@ def synthesize_node(state: AgentState) -> dict:
         evidence_lines = []
         diffs_fetched = 0
         seen_commit_shas = set()
+        total_chars = 0
+        max_evidence_chars = 24000
 
-        for c in retrieved:
+        ranked_retrieved = sorted(
+            enumerate(retrieved),
+            key=lambda item: (
+                float(item[1].get("rrf_score") or 0.0) if isinstance(item[1], dict) else 0.0,
+                float(item[1].get("score") or 0.0) if isinstance(item[1], dict) else 0.0,
+                -item[0],
+            ),
+            reverse=True,
+        )
+
+        for _, c in ranked_retrieved:
+            if not isinstance(c, dict):
+                continue
             stype = c.get("source_type", "commit")
             sid = c.get("source_id", "")
             rel_ids = c.get("related_ids", [])
@@ -95,7 +109,13 @@ def synthesize_node(state: AgentState) -> dict:
                     except Exception:
                         pass
 
+            if total_chars + len(chunk_entry) > max_evidence_chars and evidence_lines:
+                remaining = max_evidence_chars - total_chars
+                if remaining > 200:
+                    evidence_lines.append(chunk_entry[:remaining] + "... [truncated]")
+                break
             evidence_lines.append(chunk_entry)
+            total_chars += len(chunk_entry)
         evidence_text = "\n\n".join(evidence_lines)
 
         prompt = SYNTHESIZE_PROMPT.format(
@@ -116,7 +136,7 @@ def synthesize_node(state: AgentState) -> dict:
             final_answer = _format_offline_evidence(question, retrieved)
         elif unverified and not state.get("verification_passed", True):
             if "Notice:" not in final_answer and "disclaim" not in final_answer.lower():
-                final_answer += "\n\n> ⚠️ *Note: Some historical claims could not be conclusively verified against repository commits/PR evidence.*"
+                final_answer += "\n\n> \u26a0\ufe0f *Note: Some historical claims could not be conclusively verified against repository commits/PR evidence.*"
         return {"response": final_answer}
     except Exception as e:
         print(f"Error in synthesize_node: {e}", file=sys.stderr)

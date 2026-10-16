@@ -115,6 +115,76 @@ def update_cross_links(
             i.linked_commit_shas = sorted(linked_shas)
             session.add(i)
 
+        # Synchronize CausalEdge table for the repository
+        try:
+            from archaeologist.storage.models import CausalEdge, Commit
+
+            edge_records = []
+            edge_set = set()
+
+            def add_edge_rec(s_id: str, t_id: str, e_type: str, lbl: str, hl: bool = False, r_id: str = ""):
+                key = (s_id, t_id, e_type, r_id)
+                if key not in edge_set:
+                    edge_set.add(key)
+                    edge_records.append({
+                        "repo_id": r_id,
+                        "source_id": s_id,
+                        "target_id": t_id,
+                        "edge_type": e_type,
+                        "label": lbl,
+                        "highlight": hl
+                    })
+
+            # Issue <-> PR edges and PR -> Commit edges
+            for p in all_prs:
+                p_r = p.repo_id or repo_id or ""
+                p_id = f"pr:#{p.number}"
+                for inum in (p.linked_issue_numbers or []):
+                    i_id = f"issue:#{inum}"
+                    add_edge_rec(i_id, p_id, "resolves", "RESOLVED_BY_PR", r_id=p_r)
+                for sha in (p.linked_commit_shas or []):
+                    if len(sha) >= 7:
+                        c_id = f"commit:{sha[:7]}"
+                        add_edge_rec(p_id, c_id, "merges", "MERGED_IN_COMMIT", r_id=p_r)
+
+            for i in all_issues:
+                i_r = i.repo_id or repo_id or ""
+                i_id = f"issue:#{i.number}"
+                for pnum in (i.linked_pr_numbers or []):
+                    p_id = f"pr:#{pnum}"
+                    add_edge_rec(i_id, p_id, "resolves", "RESOLVES_ISSUE", r_id=i_r)
+
+            # Revert and symbol edges for commits in this repo
+            c_query = select(Commit)
+            if repo_id:
+                c_query = c_query.where(Commit.repo_id == repo_id)
+            repo_commits = session.exec(c_query).all()
+
+            for c in repo_commits:
+                c_r = c.repo_id or repo_id or ""
+                cid = f"commit:{c.sha[:7]}"
+                if c.reverts_sha:
+                    add_edge_rec(cid, f"commit:{c.reverts_sha[:7]}", "reverts", "REVERTS_COMMIT", hl=True, r_id=c_r)
+                if c.superseded_by_sha:
+                    add_edge_rec(cid, f"commit:{c.superseded_by_sha[:7]}", "superseded_by", "SUPERSEDED_BY", hl=True, r_id=c_r)
+                for sym in (c.symbols_modified or []):
+                    if sym:
+                        add_edge_rec(cid, f"symbol:{sym}", "modifies", "MODIFIES_SYMBOL", r_id=c_r)
+
+            # Delete old edges for this repo (or all when unscoped) and batch insert new edges
+            if repo_id:
+                del_edges = select(CausalEdge).where(CausalEdge.repo_id == repo_id)
+            else:
+                del_edges = select(CausalEdge)
+            for old_edge in session.exec(del_edges).all():
+                session.delete(old_edge)
+            session.flush()
+
+            for edge_dict in edge_records:
+                session.add(CausalEdge(**edge_dict))
+        except Exception:
+            pass
+
         session.commit()
         return all_prs, all_issues
 

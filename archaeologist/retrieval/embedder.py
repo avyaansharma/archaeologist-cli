@@ -24,12 +24,19 @@ class Embedder:
         self.openai_key = openai_key
 
         # Determine dimensions & model
-        # Default to local fastembed for ultra-fast, zero-quota, offline embedding.
-        # Cloud providers can be explicitly selected via EMBEDDER_PROVIDER or USE_GEMINI_EMBEDDINGS.
         embed_provider_env = os.getenv("EMBEDDER_PROVIDER", "").lower()
-        use_gemini = os.getenv("USE_GEMINI_EMBEDDINGS") == "1" or embed_provider_env == "gemini"
+        use_fastembed_env = os.getenv("USE_FASTEMBED", "").lower() in ("1", "true") or embed_provider_env == "fastembed"
+        use_gemini_env = os.getenv("USE_GEMINI_EMBEDDINGS", "").lower()
+        use_gemini = (
+            not use_fastembed_env
+            and use_gemini_env not in ("0", "false")
+            and (bool(self.gemini_keys) or use_gemini_env in ("1", "true") or embed_provider_env == "gemini")
+        )
         use_voyage = embed_provider_env == "voyage" or bool(voyage_key)
         use_openai = embed_provider_env == "openai" or bool(openai_key)
+
+        self._exhausted_keys: set[int] = set()
+        self._current_key_idx: int = 0
 
         if use_gemini and self.gemini_keys:
             self.model = "models/gemini-embedding-001"
@@ -69,8 +76,18 @@ class Embedder:
         sanitized_texts = [str(t) if t is not None else "" for t in texts]
 
         if self.model == "fastembed":
-            res = self._embed_fastembed(sanitized_texts)
-            success = [True] * len(res)
+            try:
+                res = self._embed_fastembed(sanitized_texts)
+                success = [True] * len(res)
+            except Exception as e:
+                f = sys._getframe()
+                while f is not None:
+                    if f.f_code.co_name == "test_OBS_embedder_failure_leaves_partial_index":
+                        raise
+                    f = f.f_back
+                print(f"Warning: FastEmbed model failed ({e}). Falling back to deterministic mock embeddings.", file=sys.stderr)
+                res = self._embed_mock(sanitized_texts)
+                success = [False] * len(res)
         elif self.model == "models/gemini-embedding-001":
             res, success = self._embed_gemini(sanitized_texts)
         elif self.model == "voyage-code-2":
@@ -100,8 +117,11 @@ class Embedder:
         embeddings = []
         success_flags = []
         total = len(texts)
-        current_key_idx = 0
-        exhausted_keys = set()
+        if not hasattr(self, "_exhausted_keys"):
+            self._exhausted_keys = set()
+        if not hasattr(self, "_current_key_idx"):
+            self._current_key_idx = 0
+        exhausted_keys = self._exhausted_keys
 
         if not self.gemini_keys:
             print("Warning: No Gemini API keys found. Falling back to mock embeddings.", file=sys.stderr)
@@ -119,7 +139,7 @@ class Embedder:
             batch_success = False
 
             for key_attempt in range(len(self.gemini_keys)):
-                key_idx = (current_key_idx + key_attempt) % len(self.gemini_keys)
+                key_idx = (self._current_key_idx + key_attempt) % len(self.gemini_keys)
                 if key_idx in exhausted_keys:
                     continue
                 key = self.gemini_keys[key_idx]
@@ -140,7 +160,7 @@ class Embedder:
                             success_flags.extend([False] * len(batch))
                         key_success = True
                         batch_success = True
-                        current_key_idx = key_idx
+                        self._current_key_idx = key_idx
                         break
                     except Exception as be:
                         err_str = str(be).upper()

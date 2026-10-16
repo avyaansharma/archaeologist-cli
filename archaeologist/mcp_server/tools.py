@@ -61,22 +61,26 @@ def search_history_tool(
     embedder = Embedder()
     target_qdrant = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
     vector_store = VectorStore(vector_size=embedder.dimension, storage_path=target_qdrant)
+    is_degraded = bool(getattr(vector_store, "degraded", False))
+    if is_degraded:
+        print("Notice: VectorStore is in degraded mode (locked by another process); falling back to BM25.", file=sys.stderr)
 
     dense_hits = []
     try:
-        query_vectors, success_flags = embedder.embed_texts([query], return_success_flags=True)
-        if query_vectors and success_flags and success_flags[0]:
-            dense_hits = vector_store.search_chunks(
-                query_vector=query_vectors[0],
-                limit=30,
-                file_path=file_path,
-                date_from=date_from,
-                date_to=date_to,
-                source_types=source_types,
-                repo_id=repo_id
-            )
-        else:
-            print(f"Notice: Query embedding returned fallback mock vector. Skipping dense search for '{query}'", file=sys.stderr)
+        if not is_degraded:
+            query_vectors, success_flags = embedder.embed_texts([query], return_success_flags=True)
+            if query_vectors and success_flags and success_flags[0]:
+                dense_hits = vector_store.search_chunks(
+                    query_vector=query_vectors[0],
+                    limit=30,
+                    file_path=file_path,
+                    date_from=date_from,
+                    date_to=date_to,
+                    source_types=source_types,
+                    repo_id=repo_id
+                )
+            else:
+                print(f"Notice: Query embedding returned fallback mock vector. Skipping dense search for '{query}'", file=sys.stderr)
     except Exception as e:
         print(f"Error in vector search: {e}", file=sys.stderr)
     finally:
@@ -92,6 +96,8 @@ def search_history_tool(
             text_content = text_content[:4000] + "... [truncated]"
         payload["text"] = text_content
         payload["is_untrusted_data"] = True
+        if is_degraded:
+            payload["degraded"] = True
         formatted.append({
             "id": hit["id"],
             "rrf_score": hit["rrf_score"],

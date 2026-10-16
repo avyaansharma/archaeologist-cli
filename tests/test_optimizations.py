@@ -53,7 +53,7 @@ def test_find_related_discussion_tool_fast_lookup():
         existing_pr = session.get(PullRequest, ("", 42))
         if existing_pr:
             session.delete(existing_pr)
-        existing_c = session.get(Commit, "a1b2c3d4e5f67890123456789012345678901234")
+        existing_c = session.get(Commit, ("", "a1b2c3d4e5f67890123456789012345678901234"))
         if existing_c:
             session.delete(existing_c)
         session.commit()

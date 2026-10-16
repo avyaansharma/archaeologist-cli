@@ -213,3 +213,18 @@ def symbol_history_tool(symbol_query: str, repo_id: str | None = None, fuzzy: bo
                     "files": _get_json_list(files_raw)
                 })
     return matching_commits
+
+
+def graph_topology_tool(repo_id: str | None = None) -> dict[str, Any]:
+    """Computes whole-repository topological metrics (PageRank, Betweenness Centrality) via rustworkx."""
+    try:
+        from archaeologist.retrieval.causal_graph import compute_graph_topology_metrics
+        return compute_graph_topology_metrics(repo_id=repo_id)
+    except Exception as e:
+        return {
+            "error": str(e),
+            "total_nodes": 0,
+            "total_edges": 0,
+            "top_pagerank": [],
+            "top_betweenness": []
+        }

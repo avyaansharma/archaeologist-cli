@@ -56,6 +56,9 @@ brag-output/
 auditfindings.md
 findings.md
 test_findings.py
+UNDERLYING_ISSUES_REPORT.md
+verify_underlying_issues.py
+decisions.md
 /conftest.py
 e2e_measure.py
 

@@ -119,25 +119,39 @@ def reciprocal_rank_fusion(
 
         rrf_scores[chunk_id] += score_contrib * decay_factor * symbol_boost
 
-    # Process channels: Exact matches, Dense vectors, Sparse BM25, and Fallback keyword hits
-    exact_list = list(exact_hits or [])
+    # Process channels: Exact matches, Symbol matches, Dense vectors, Sparse BM25, and Fallback hits
+    exact_list = []
+    symbol_list = []
     dense_vector_list = []
     fallback_list = []
+
+    for hit in (exact_hits or []):
+        sc = float(hit.get("score") if hit.get("score") is not None else 0.0)
+        if sc >= 3.0:
+            exact_list.append(hit)
+        else:
+            symbol_list.append(hit)
 
     for hit in dense_hits:
         sc = float(hit.get("score") if hit.get("score") is not None else 0.0)
         cid = str(hit.get("id") or (hit.get("payload") or {}).get("id") or "")
         payload_data = hit.get("payload") or {}
-        # Exact hits: score >= 2.0 (e.g. SHA/PR matches with 3.0)
-        if sc >= 2.0:
+        if sc >= 3.0:
             exact_list.append(hit)
-        # Fallback hits: explicit fallback flag or prefix, or text_fallback source_type
-        elif payload_data.get("is_fallback") or cid.startswith("like_") or payload_data.get("source_type") == "text_fallback":
+        elif sc >= 2.0:
+            symbol_list.append(hit)
+        elif (
+            payload_data.get("is_fallback")
+            or payload_data.get("is_symbol_lookup")
+            or cid.startswith("like_")
+            or cid.startswith("sym_")
+            or payload_data.get("source_type") == "text_fallback"
+        ):
             fallback_list.append(hit)
         else:
             dense_vector_list.append(hit)
 
-    # 1. Exact matches channel (weight 2.5)
+    # 1. Exact SHA/PR matches channel (weight 2.5)
     sorted_exact = sorted(
         exact_list,
         key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
@@ -151,7 +165,21 @@ def reciprocal_rank_fusion(
             payload["id"] = chunk_id
         add_hit(chunk_id, rank, payload, initial_weight=2.5)
 
-    # 2. Dense vector channel (weight 1.0)
+    # 1b. AST symbol matches channel (weight 0.2; add_hit also applies 1.75x symbol_boost)
+    sorted_symbol = sorted(
+        symbol_list,
+        key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
+        reverse=True
+    )
+    for rank, hit in enumerate(sorted_symbol, start=1):
+        raw_payload = hit.get("payload")
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or f"symbol_{rank}"
+        if "id" not in payload:
+            payload["id"] = chunk_id
+        add_hit(chunk_id, rank, payload, initial_weight=0.2)
+
+    # 2. Dense vector channel (weight 1.0, or 3.2 for top-1 high-confidence cosine match >= 0.98)
     sorted_dense = sorted(
         dense_vector_list,
         key=lambda h: float(h.get("score") if h.get("score") is not None else 0.0),
@@ -163,7 +191,9 @@ def reciprocal_rank_fusion(
         chunk_id = payload.get("id") or payload.get("chunk_id") or hit.get("id") or f"dense_{rank}"
         if "id" not in payload:
             payload["id"] = chunk_id
-        add_hit(chunk_id, rank, payload, initial_weight=1.0)
+        sc = float(hit.get("score") if hit.get("score") is not None else 0.0)
+        dense_weight = 3.2 if (rank == 1 and 0.98 <= sc < 1.0) else 1.0
+        add_hit(chunk_id, rank, payload, initial_weight=dense_weight)
 
     # 3. Sparse (BM25) channel (weight 1.0)
     sorted_sparse = sorted(

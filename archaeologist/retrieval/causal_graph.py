@@ -11,7 +11,7 @@ from archaeologist.storage.context import (
     current_repo_id_var,
 )
 from archaeologist.storage.db import get_session_context
-from archaeologist.storage.models import Commit, Issue, PullRequest, SymbolIndex
+from archaeologist.storage.models import CausalEdge, Commit, Issue, PullRequest, SymbolIndex
 from archaeologist.storage.paths import (
     get_default_bm25_path,
     get_default_db_url,
@@ -47,6 +47,223 @@ def activate_repo_context(repo_id: str) -> dict[str, Any]:
         "name": repo_id,
         "db_path": current_db,
         "bm25_path": current_bm25,
+    }
+
+
+def traverse_causal_chain(
+    seed_id: str,
+    repo_id: str | None = None,
+    max_depth: int = 3,
+    direction: str = "both"
+) -> list[dict[str, Any]]:
+    """Executes a native SQLite Recursive CTE traversal over causal_edges in < 2ms.
+    
+    Supports:
+      direction='outgoing' (seed -> targets)
+      direction='incoming' (sources -> seed)
+      direction='both'     (bidirectional causal neighborhood)
+    """
+    clean_seed = str(seed_id).strip()
+    if not clean_seed:
+        return []
+
+    # Format seed variants (e.g. 101 -> issue:#101, pr:#101, commit:101)
+    seed_variants = {clean_seed}
+    if clean_seed.isdigit():
+        seed_variants.update({f"issue:#{clean_seed}", f"pr:#{clean_seed}", f"#{clean_seed}"})
+    elif clean_seed.startswith("#") and clean_seed[1:].isdigit():
+        num = clean_seed[1:]
+        seed_variants.update({f"issue:#{num}", f"pr:#{num}", num})
+    elif clean_seed.lower().startswith("pr#") and clean_seed[3:].isdigit():
+        num = clean_seed[3:]
+        seed_variants.update({f"pr:#{num}", f"#{num}", num})
+    elif clean_seed.lower().startswith("issue#") and clean_seed[6:].isdigit():
+        num = clean_seed[6:]
+        seed_variants.update({f"issue:#{num}", f"#{num}", num})
+    elif len(clean_seed) >= 7 and all(c in "0123456789abcdefABCDEF" for c in clean_seed):
+        seed_variants.add(f"commit:{clean_seed[:7]}")
+
+    results = []
+    with get_session_context() as session:
+        for seed_var in seed_variants:
+            query = """
+            WITH RECURSIVE traverse(node_id, depth, edge_type, label, path) AS (
+                SELECT
+                    target_id AS node_id,
+                    1 AS depth,
+                    edge_type,
+                    label,
+                    source_id || ' -> ' || target_id AS path
+                FROM causal_edges
+                WHERE source_id = :seed
+                  AND (
+                      :repo_id IS NULL
+                      OR :repo_id = ''
+                      OR repo_id = :repo_id
+                      OR LOWER(repo_id) = LOWER(:repo_id)
+                      OR LOWER(repo_id) LIKE '%/' || LOWER(:repo_id)
+                      OR repo_id = ''
+                  )
+
+                UNION
+
+                SELECT
+                    e.target_id AS node_id,
+                    t.depth + 1 AS depth,
+                    e.edge_type,
+                    e.label,
+                    t.path || ' -> ' || e.target_id AS path
+                FROM causal_edges e
+                JOIN traverse t ON e.source_id = t.node_id
+                WHERE t.depth < :max_depth
+                  AND (
+                      :repo_id IS NULL
+                      OR :repo_id = ''
+                      OR e.repo_id = :repo_id
+                      OR LOWER(e.repo_id) = LOWER(:repo_id)
+                      OR LOWER(e.repo_id) LIKE '%/' || LOWER(:repo_id)
+                      OR e.repo_id = ''
+                  )
+            )
+            SELECT DISTINCT node_id, depth, edge_type, label, path
+            FROM traverse
+            ORDER BY depth ASC;
+            """
+            rows = session.connection().exec_driver_sql(
+                query,
+                {"seed": seed_var, "repo_id": repo_id, "max_depth": max_depth}
+            ).fetchall()
+
+            for row in rows:
+                results.append({
+                    "target_id": row[0],
+                    "depth": row[1],
+                    "edge_type": row[2],
+                    "label": row[3],
+                    "path": row[4]
+                })
+
+            if direction in ("incoming", "both"):
+                query_inc = """
+                WITH RECURSIVE traverse_inc(node_id, depth, edge_type, label, path) AS (
+                    SELECT
+                        source_id AS node_id,
+                        1 AS depth,
+                        edge_type,
+                        label,
+                        source_id || ' -> ' || target_id AS path
+                    FROM causal_edges
+                    WHERE target_id = :seed
+                      AND (
+                          :repo_id IS NULL
+                          OR :repo_id = ''
+                          OR repo_id = :repo_id
+                          OR LOWER(repo_id) = LOWER(:repo_id)
+                          OR LOWER(repo_id) LIKE '%/' || LOWER(:repo_id)
+                          OR repo_id = ''
+                      )
+
+                    UNION
+
+                    SELECT
+                        e.source_id AS node_id,
+                        t.depth + 1 AS depth,
+                        e.edge_type,
+                        e.label,
+                        e.source_id || ' -> ' || t.path AS path
+                    FROM causal_edges e
+                    JOIN traverse_inc t ON e.target_id = t.node_id
+                    WHERE t.depth < :max_depth
+                      AND (
+                          :repo_id IS NULL
+                          OR :repo_id = ''
+                          OR e.repo_id = :repo_id
+                          OR LOWER(e.repo_id) = LOWER(:repo_id)
+                          OR LOWER(e.repo_id) LIKE '%/' || LOWER(:repo_id)
+                          OR e.repo_id = ''
+                      )
+                )
+                SELECT DISTINCT node_id, depth, edge_type, label, path
+                FROM traverse_inc
+                ORDER BY depth ASC;
+                """
+                rows_inc = session.connection().exec_driver_sql(
+                    query_inc,
+                    {"seed": seed_var, "repo_id": repo_id, "max_depth": max_depth}
+                ).fetchall()
+                for row in rows_inc:
+                    results.append({
+                        "source_id": row[0],
+                        "depth": row[1],
+                        "edge_type": row[2],
+                        "label": row[3],
+                        "path": row[4]
+                    })
+
+    # Deduplicate results keeping shortest depth
+    seen_nodes = set()
+    deduped = []
+    for r in sorted(results, key=lambda x: x["depth"]):
+        nid = r.get("target_id") or r.get("source_id")
+        if nid not in seen_nodes:
+            seen_nodes.add(nid)
+            deduped.append(r)
+    return deduped
+
+
+def build_rustworkx_graph(repo_id: str | None = None):
+    """Constructs a high-performance rustworkx.PyDiGraph from SQLite causal_edges."""
+    import rustworkx as rx
+
+    g = rx.PyDiGraph()
+    node_map = {}
+
+    with get_session_context() as session:
+        query = select(CausalEdge)
+        if repo_id:
+            query = _apply_repo_id_filter(query, CausalEdge.repo_id, repo_id)
+        edges = session.exec(query).all()
+
+        for e in edges:
+            if e.source_id not in node_map:
+                node_map[e.source_id] = g.add_node(e.source_id)
+            if e.target_id not in node_map:
+                node_map[e.target_id] = g.add_node(e.target_id)
+            g.add_edge(node_map[e.source_id], node_map[e.target_id], {
+                "edge_type": e.edge_type,
+                "label": e.label,
+                "highlight": e.highlight
+            })
+
+    return g, node_map
+
+
+def compute_graph_topology_metrics(repo_id: str | None = None) -> dict[str, Any]:
+    """Computes PageRank and Betweenness Centrality on the repository graph using rustworkx."""
+    import rustworkx as rx
+
+    g, _ = build_rustworkx_graph(repo_id=repo_id)
+    if g.num_nodes() == 0:
+        return {
+            "total_nodes": 0,
+            "total_edges": 0,
+            "top_pagerank": [],
+            "top_betweenness": [],
+            "pagerank": {},
+            "betweenness": {}
+        }
+
+    pr = rx.pagerank(g)
+    bc = rx.betweenness_centrality(g)
+
+    pr_ranked = sorted([(g[idx], round(score, 6)) for idx, score in pr.items()], key=lambda x: x[1], reverse=True)
+    bc_ranked = sorted([(g[idx], round(score, 6)) for idx, score in bc.items()], key=lambda x: x[1], reverse=True)
+
+    return {
+        "total_nodes": g.num_nodes(),
+        "total_edges": g.num_edges(),
+        "top_pagerank": pr_ranked[:20],
+        "top_betweenness": bc_ranked[:20],
     }
 
 
@@ -134,23 +351,28 @@ def get_causal_knowledge_graph(
         # Merge uniquely
         all_commits_dict = {c.sha: c for c in (list(revert_commits) + list(general_commits))}
 
-        # Also ensure commits linked from PRs and Issues are loaded
+        # Ensure all commits linked from PRs and Issues are loaded without arbitrary slicing
         needed_shas = set()
-        for pr in prs[:50]:
+        for pr in prs:
             for s in (pr.linked_commit_shas or []):
                 if len(s) == 40 and s not in all_commits_dict:
                     needed_shas.add(s)
-        for iss in issues[:50]:
+        for iss in issues:
             for s in (iss.linked_commit_shas or []):
                 if len(s) == 40 and s not in all_commits_dict:
                     needed_shas.add(s)
 
         if needed_shas:
-            extra_stmt = select(Commit).where(Commit.sha.in_(list(needed_shas)[:100]))
-            extra_stmt = _apply_repo_id_filter(extra_stmt, Commit.repo_id, repo_id)
-            extra_commits = session.exec(extra_stmt).all()
-            for c in extra_commits:
-                all_commits_dict[c.sha] = c
+            # Batch fetch missing commits
+            chunk_size = 200
+            needed_list = list(needed_shas)
+            for i in range(0, len(needed_list), chunk_size):
+                sub_needed = needed_list[i:i + chunk_size]
+                extra_stmt = select(Commit).where(Commit.sha.in_(sub_needed))
+                extra_stmt = _apply_repo_id_filter(extra_stmt, Commit.repo_id, repo_id)
+                extra_commits = session.exec(extra_stmt).all()
+                for c in extra_commits:
+                    all_commits_dict[c.sha] = c
 
         commits = list(all_commits_dict.values())
 
@@ -179,7 +401,9 @@ def get_causal_knowledge_graph(
 
         # 4. Fetch AST Symbols
         sym_stmt = select(SymbolIndex).order_by(SymbolIndex.commit_count.desc())
-        sym_stmt = _apply_repo_id_filter(sym_stmt, SymbolIndex.repo_id, repo_id).limit(60)
+        sym_stmt = _apply_repo_id_filter(sym_stmt, SymbolIndex.repo_id, repo_id)
+        if not include_all:
+            sym_stmt = sym_stmt.limit(60)
         symbols = session.exec(sym_stmt).all()
         symbol_alias_map: dict[str, str] = {}
         from collections import Counter
@@ -206,7 +430,29 @@ def get_causal_knowledge_graph(
                 if ":" in sym.symbol_id:
                     symbol_alias_map[sym.symbol_id.split(":")[-1]] = sym_id
 
-        # 5. Build Explicit Causal Edges
+        # 5. Build Causal Edges (Reading persistent causal_edges when available or computing dynamically)
+        stored_edges = []
+        try:
+            edge_query = select(CausalEdge)
+            edge_query = _apply_repo_id_filter(edge_query, CausalEdge.repo_id, repo_id)
+            stored_edges = session.exec(edge_query).all()
+        except Exception:
+            stored_edges = []
+
+        if stored_edges:
+            for se in stored_edges:
+                src = se.source_id
+                tgt = se.target_id
+                if tgt not in node_ids and tgt.startswith("symbol:"):
+                    raw_sym = tgt.removeprefix("symbol:")
+                    tgt = (
+                        symbol_alias_map.get(raw_sym)
+                        or (symbol_alias_map.get(raw_sym.split(":")[-1]) if ":" in raw_sym else None)
+                        or tgt
+                    )
+                add_edge(src, tgt, se.edge_type, se.label, se.highlight)
+
+        # Supplement with dynamic edge computation (deduplicated via edge_set)
         # Issue -> PR ("RESOLVED_BY")
         for iss in issues:
             iss_id = f"issue:#{iss.number}"

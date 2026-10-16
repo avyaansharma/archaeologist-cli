@@ -20,6 +20,7 @@ from archaeologist.mcp_server.tools import (
     search_history_tool,
     symbol_history_tool,
 )
+from archaeologist.storage.analytics import graph_topology_tool
 
 # Initialize FastMCP Server
 mcp = FastMCP("Codebase Archaeologist")
@@ -173,6 +174,13 @@ def ask(question: str) -> str:
     _, repo_id = _get_mcp_repo_context()
     result = ask_tool(question, repo_id=repo_id)
     return result
+
+@mcp.tool()
+def graph_topology() -> str:
+    """Computes whole-repository graph topology metrics (PageRank & Betweenness Centrality) using high-performance rustworkx."""
+    _, repo_id = _get_mcp_repo_context()
+    results = graph_topology_tool(repo_id=repo_id)
+    return json.dumps(results, indent=2, default=str)
 
 def main():
     mcp.run()
