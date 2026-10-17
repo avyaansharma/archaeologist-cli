@@ -133,7 +133,7 @@ def is_valid_commit_sha(session, sha_str: str, repo_id: str | None = None) -> bo
     escaped = escape_like(sha_str)
     stmt = select(Commit.sha).where(Commit.sha.like(f"{escaped}%", escape="\\"))
     if repo_id:
-        stmt = stmt.where(Commit.repo_id == repo_id)
+        stmt = stmt.where(_repo_filter(Commit.repo_id, repo_id))
     result = session.exec(stmt).first()
     return result is not None
 
@@ -146,22 +146,8 @@ def is_valid_pr_or_issue(session, ref_num: Any, repo_id: str | None = None) -> b
     pr_stmt = select(PullRequest.number).where(PullRequest.number == clean_num)
     issue_stmt = select(Issue.number).where(Issue.number == clean_num)
     if repo_id:
-        clean_repo = repo_id.strip().lower()
-        base_repo = clean_repo.split("/")[-1]
-        from archaeologist.utils.security import escape_like
-        escaped_base = escape_like(base_repo)
-        repo_filter_pr = (
-            (PullRequest.repo_id == clean_repo) |
-            (PullRequest.repo_id.like(f"%/{escaped_base}", escape="\\")) |
-            (PullRequest.repo_id == base_repo)
-        )
-        repo_filter_iss = (
-            (Issue.repo_id == clean_repo) |
-            (Issue.repo_id.like(f"%/{escaped_base}", escape="\\")) |
-            (Issue.repo_id == base_repo)
-        )
-        pr_stmt = pr_stmt.where(repo_filter_pr)
-        issue_stmt = issue_stmt.where(repo_filter_iss)
+        pr_stmt = pr_stmt.where(_repo_filter(PullRequest.repo_id, repo_id))
+        issue_stmt = issue_stmt.where(_repo_filter(Issue.repo_id, repo_id))
 
     if session.exec(pr_stmt).first() is not None:
         return True
@@ -175,6 +161,7 @@ def _repo_filter(model_col, repo_id: str | None):
     clean_lower = clean_repo.lower()
     base_repo = clean_repo.split("/")[-1]
     base_lower = clean_lower.split("/")[-1]
+    alt_lower = base_lower[7:] if base_lower.startswith("python-") else f"python-{base_lower}"
     from archaeologist.utils.security import escape_like
     escaped_base = escape_like(base_repo)
     escaped_base_lower = escape_like(base_lower)
@@ -184,7 +171,8 @@ def _repo_filter(model_col, repo_id: str | None):
         (model_col.like(f"%/{escaped_base}", escape="\\")) |
         (func.lower(model_col).like(f"%/{escaped_base_lower}", escape="\\")) |
         (model_col == base_repo) |
-        (func.lower(model_col) == base_lower)
+        (func.lower(model_col) == base_lower) |
+        (func.lower(model_col) == alt_lower)
     )
 
 def find_candidate_symbols(session, text: str, repo_id: str | None = None, limit: int = 8) -> list[dict]:

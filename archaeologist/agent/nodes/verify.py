@@ -1,7 +1,11 @@
-import re
 import sys
 
 from archaeologist.agent.state import AgentState
+from archaeologist.agent.verification_engine import (
+    build_evidence_index,
+    hydrate_missing_causal_links,
+    verify_claims_deterministically,
+)
 from archaeologist.utils.gemini_client import DEFAULT_MODEL, GeminiClientWrapper, get_gemini_api_key
 
 DRAFT_PROMPT = """You are a codebase archaeologist drafting a preliminary answer based on retrieved git/issue/PR evidence chunks.
@@ -36,27 +40,18 @@ Return a JSON object with this exact structure:
   "unverified_claims": []
 }}"""
 
+
 def verify_node(state: AgentState) -> dict:
     question = state["question"]
+    repo_id = state.get("repo_id")
     retrieved = state.get("retrieved_chunks", [])
     draft = state.get("draft_answer")
     verification_passed = state.get("verification_passed", True)
 
-    print(f"Agent: Generating draft answer and self-verifying using Gemini ({DEFAULT_MODEL})...", file=sys.stderr)
+    print(f"Agent: Running hybrid deterministic verification & drafting ({DEFAULT_MODEL})...", file=sys.stderr)
 
-    api_key = get_gemini_api_key()
-    if not api_key:
-        return {
-            "draft_answer": draft,
-            "verification_passed": False,
-            "unverified_claims": ["Judge unavailable: No Gemini API key available to verify answer."],
-            "judge_unavailable": True
-        }
-
-    client = GeminiClientWrapper(api_key=api_key)
-    evidence_lines = []
-    known_shas = set()
-    known_prs_issues = set()
+    # STAGE 1: Pre-Draft Evidence Sufficiency & Causal Link Auto-Hydration
+    retrieved = hydrate_missing_causal_links(retrieved, repo_id=repo_id, max_hydrate=3)
 
     # Sort chunks by relevance score descending, guaranteeing top-3 per sub_question_idx first
     valid_chunks = [c for c in retrieved if isinstance(c, dict)]
@@ -91,22 +86,14 @@ def verify_node(state: AgentState) -> dict:
     else:
         sorted_chunks = by_score
 
+    evidence_lines = []
     total_evidence_chars = 0
     max_evidence_chars = 16000  # ~4000 tokens safe budget to prevent prompt overflow
 
     for c in sorted_chunks:
-        sid = str(c.get("source_id", ""))
-        if sid:
-            known_shas.add(sid.lower()[:7])
-            known_shas.add(sid.lower())
         rel_ids = c.get("related_ids", [])
-        for r in rel_ids:
-            known_prs_issues.add(str(r).lower())
-            m = re.search(r'(\d+)', str(r))
-            if m:
-                known_prs_issues.add(m.group(1))
         rel_str = f" [Linked PRs/Issues: {rel_ids}]" if rel_ids else ""
-        raw_text = str(c.get('text', '') or "")
+        raw_text = str(c.get("text", "") or "")
         safe_text = raw_text.replace("</evidence>", "&lt;/evidence&gt;").replace("<evidence>", "&lt;evidence&gt;")
         line = f"[{c.get('id', '')}]{rel_str} {safe_text}"
         if total_evidence_chars + len(line) > max_evidence_chars and evidence_lines:
@@ -116,9 +103,47 @@ def verify_node(state: AgentState) -> dict:
 
     evidence_text = "\n\n".join(evidence_lines)
 
+    api_key = get_gemini_api_key()
+    if not api_key:
+        offline_unverified = ["Judge unavailable: No Gemini API key available to verify answer."]
+        if draft:
+            ev_idx = build_evidence_index(
+                sorted_chunks=sorted_chunks,
+                evidence_text=evidence_text,
+                repo_id=repo_id,
+                candidate_text=draft,
+            )
+            det_offline = verify_claims_deterministically(
+                draft_text=draft,
+                evidence_index=ev_idx,
+                question=question,
+                repo_id=repo_id,
+            )
+            offline_unverified.extend(det_offline.unverified_claims)
+        return {
+            "retrieved_chunks": retrieved,
+            "draft_answer": draft,
+            "verification_passed": False,
+            "unverified_claims": offline_unverified,
+            "judge_unavailable": True,
+        }
+
+    client = GeminiClientWrapper(api_key=api_key)
+
     def _is_judge_unavailable_error(err_str: str) -> bool:
         low = err_str.lower()
-        return any(k in low for k in ("429", "resource_exhausted", "quota", "rate limit", "no gemini api key", "unauthorized", "invalid api key"))
+        return any(
+            k in low
+            for k in (
+                "429",
+                "resource_exhausted",
+                "quota",
+                "rate limit",
+                "no gemini api key",
+                "unauthorized",
+                "invalid api key",
+            )
+        )
 
     # 1. Force Draft Answer regeneration if missing or if previous verification failed
     if not draft or not verification_passed:
@@ -129,67 +154,96 @@ def verify_node(state: AgentState) -> dict:
                 prompt=draft_prompt,
                 model=DEFAULT_MODEL,
                 temperature=0.0,
-                max_output_tokens=1000
+                max_output_tokens=1000,
             )
         except Exception as e:
             print(f"Error generating draft answer: {e}", file=sys.stderr)
             if _is_judge_unavailable_error(str(e)):
                 return {
+                    "retrieved_chunks": retrieved,
                     "draft_answer": "Draft generation unavailable due to Gemini API quota/rate limit.",
                     "verification_passed": False,
                     "unverified_claims": [f"Judge unavailable: {e}"],
-                    "judge_unavailable": True
+                    "judge_unavailable": True,
                 }
             draft = "Draft generation failed."
 
-    # 2. Fact-Check Draft Answer against Evidence
+    # 2. STAGE 2 & STAGE 3: Deterministic Relational Tuple & Identifier Grounding Verification
+    evidence_index = build_evidence_index(
+        sorted_chunks=sorted_chunks,
+        evidence_text=evidence_text,
+        repo_id=repo_id,
+        candidate_text=draft or "",
+    )
+    det_result = verify_claims_deterministically(
+        draft_text=draft or "",
+        evidence_index=evidence_index,
+        question=question,
+        repo_id=repo_id,
+    )
+
+    # 2a. Short-circuit immediately on deterministic failure (0 LLM Judge tokens used)
+    if not det_result.passed:
+        print(
+            f"Agent: Deterministic verification caught {len(det_result.unverified_claims)} error(s); "
+            "short-circuiting LLM judge call.",
+            file=sys.stderr,
+        )
+        return {
+            "retrieved_chunks": retrieved,
+            "draft_answer": draft,
+            "verification_passed": False,
+            "unverified_claims": det_result.unverified_claims,
+            "judge_unavailable": False,
+        }
+
+    # 2b. Fast-pass immediately when deterministic confidence is high (0 LLM Judge tokens used)
+    if det_result.fast_pass:
+        print(
+            f"Agent: Deterministic verification fast-passed "
+            f"(citations={det_result.verified_citation_count}, grounding={det_result.grounding_score:.2f}); "
+            "skipping redundant LLM judge call.",
+            file=sys.stderr,
+        )
+        return {
+            "retrieved_chunks": retrieved,
+            "draft_answer": draft,
+            "verification_passed": True,
+            "unverified_claims": [],
+            "judge_unavailable": False,
+        }
+
+    # 3. Fallback LLM Tie-Breaker Judge (only when draft has 0 explicit citations or ambiguous grounding)
     try:
         verify_prompt = VERIFY_PROMPT.format(question=question, draft_answer=draft, evidence=evidence_text)
         result = client.generate_json(
             prompt=verify_prompt,
             model=DEFAULT_MODEL,
             temperature=0.0,
-            max_output_tokens=1000
+            max_output_tokens=1000,
         )
         passed = bool(result.get("verification_passed", False))
         unverified = list(result.get("unverified_claims", []))
-
-        # Provenance check: verify any explicitly cited SHAs or PR/issue numbers exist in retrieved evidence
-        if draft:
-            cited_prs = re.findall(r'(?:PR|Issue|#)\s*#?(\d+)', draft, re.IGNORECASE)
-            for pr_num in cited_prs:
-                if pr_num not in known_prs_issues:
-                    if not re.search(rf'\b(?:pr|issue|#)\s*#?{re.escape(pr_num)}\b', evidence_text, re.IGNORECASE):
-                        passed = False
-                        unverified.append(f"Cited reference #{pr_num} not found in retrieved repository evidence.")
-
-            cited_shas = [
-                m for m in re.findall(r'\b([0-9a-fA-F]{7,40})\b', draft)
-                if not m.isdigit() and (len(m) == 40 or any(c in "abcdefABCDEF" for c in m))
-            ]
-            for sha in cited_shas:
-                sha_l = sha.lower()
-                if not any(k.startswith(sha_l[:7]) or sha_l.startswith(k[:7]) for k in known_shas if len(k) >= 7):
-                    if not re.search(rf'\b{re.escape(sha_l)}\b', evidence_text.lower()):
-                        passed = False
-                        unverified.append(f"Cited commit SHA {sha} not found in retrieved repository evidence.")
 
         if not passed and not unverified:
             unverified = ["Draft answer contained claims not supported by evidence."]
 
         return {
+            "retrieved_chunks": retrieved,
             "draft_answer": draft,
             "verification_passed": passed,
             "unverified_claims": unverified,
-            "judge_unavailable": False
+            "judge_unavailable": False,
         }
     except Exception as e:
         print(f"Error in verify_node: {e}", file=sys.stderr)
         is_unavail = _is_judge_unavailable_error(str(e))
         return {
+            "retrieved_chunks": retrieved,
             "draft_answer": draft,
             "verification_passed": False,
             "unverified_claims": [f"{'Judge unavailable: ' if is_unavail else 'Verification error: '}{e}"],
-            "judge_unavailable": is_unavail
+            "judge_unavailable": is_unavail,
         }
+
 

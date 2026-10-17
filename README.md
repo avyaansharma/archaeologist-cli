@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12-3776AB.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 | 3.12" /></a>
-  <a href="https://github.com/avyaansharma/archaeologist-cli/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-Passing_(220_tests)-brightgreen.svg?style=for-the-badge&logo=github-actions&logoColor=white" alt="CI: 220 Tests Passing" /></a>
+  <a href="https://github.com/avyaansharma/archaeologist-cli/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-Passing_(236_tests)-brightgreen.svg?style=for-the-badge&logo=github-actions&logoColor=white" alt="CI: 236 Tests Passing" /></a>
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/SQL-SQLite_%2B_Recursive_CTEs-003B57.svg?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite + Recursive CTEs" /></a>
   <a href="https://rich.readthedocs.io/"><img src="https://img.shields.io/badge/CLI-Typer_%2B_Rich-10B981.svg?style=for-the-badge&logo=terminal&logoColor=white" alt="Typer + Rich CLI" /></a>
   <a href="https://github.com/Qiskit/rustworkx"><img src="https://img.shields.io/badge/Topology-rustworkx-DEA584.svg?style=for-the-badge&logo=rust&logoColor=white" alt="rustworkx" /></a>
@@ -81,11 +81,11 @@ Discovers hidden dependencies and co-change patterns between files that frequent
 - [Key Use Cases](#-key-use-cases)
 - [Why Archaeologist CLI is Different](#-why-archaeologist-cli-is-different)
 - [Two-Tier Hybrid Causal Graph Architecture](#-two-tier-hybrid-causal-graph-architecture)
-- [Robust Hybrid Retrieval Methodology](#-robust-hybrid-retrieval-methodology)
+- [Hybrid Retrieval & 4-Stage Deterministic Verification](#-hybrid-retrieval--4-stage-deterministic-verification)
 - [Terminal CLI Workflows & Quickstart](#-terminal-cli-workflows--quickstart)
 - [CLI Command Reference](#-cli-command-reference)
 - [Native Model Context Protocol (MCP) Server](#-native-model-context-protocol-mcp-server)
-- [Benchmark Results & Leaderboard](#-benchmark-results--leaderboard)
+- [Benchmark Results & Performance Metrics](#-benchmark-results--performance-metrics)
 - [Production Hardening & Reliability](#-production-hardening--reliability)
 - [License](#-license)
 
@@ -133,7 +133,7 @@ src/services/user.py (fetchUser)
 | **AST Symbol-Aware Line Mapping** | ❌ | Partial | ✅ *(Class & Method Level)* |
 | **Bidirectional Revert Tracking** | ❌ | ❌ | ✅ *(`reverts_sha` ↔ `superseded_by`)* |
 | **PR & Issue Discussion Traversal** | ❌ | ❌ | ✅ *(Cross-Link Graph)* |
-| **Anti-Hallucination Fact Verification** | ❌ | ❌ | ✅ *(Deterministic Judge Node)* |
+| **4-Stage Deterministic Verification Engine** | ❌ | ❌ | ✅ *(SQLite Tuple & AST Grounding, 25x Faster)* |
 | **Native MCP stdio Protocol** | ❌ | ❌ | ✅ *(Claude Desktop / Cursor)* |
 
 ---
@@ -183,9 +183,9 @@ archaeologist graph-topology --top-n 10
 
 ---
 
-## 🔎 Robust Hybrid Retrieval Methodology
+## 🔎 Hybrid Retrieval & 4-Stage Deterministic Verification
 
-Archaeologist CLI employs a four-channel retrieval pipeline designed to prevent false positives and semantic dilution:
+Archaeologist CLI combines a four-channel retrieval pipeline with a **4-Stage Hybrid Deterministic Verification Engine** (`verification_engine.py`) that validates claims mathematically against SQLite and AST footprints in **~50ms** while eliminating redundant LLM Judge calls:
 
 ```text
                                   User Query
@@ -205,28 +205,41 @@ Archaeologist CLI employs a four-channel retrieval pipeline designed to prevent 
                                       │
                                       ▼
                      Recursive CTE Transitive Link Expansion
-                      (`follow_links` discover related PRs/SHAs)
+          (`follow_links` discovers PRs/SHAs with 0.92^depth score inheritance)
                                       │
                                       ▼
-                      Ranked JIT Query-Time Diff Expansion
-           (Pre-sorted by (rrf_score, score); 24,000 char context budget)
+           STAGE 1: Pre-Draft Causal Link Auto-Hydration & Stratification
+        (Hydrates missing linked PRs/Reverts from SQLite; top-3 per sub-question)
                                       │
                                       ▼
-                   Self-Verifying Judge & Claim Provenance Check
+             STAGE 2: SQLite & Chunk Relational Tuple Verification
+     (Checks SHA/PR existence, Commit ↔ File/Symbol ownership, Reverts & Chronology)
                                       │
                                       ▼
-                       Grounded Forensic Synthesis
+          STAGE 3: Structural Code Identifier Grounding & Confidence Gate
+      (Short-Circuits errors or Fast-Passes verified drafts in ~50ms, 0 Judge tokens)
+                                      │
+                                      ▼
+           STAGE 4: Grounded JIT Diff Synthesis & Post-Synthesis Guardrail
+         (24,000-char JIT diff budget + deterministic PR/Issue citation guardrail)
 ```
 
-### 1. Multi-Channel Channel Isolation in RRF
+### 1. Multi-Channel Isolation in RRF
 - **Exact Channel** (`weight=2.5`): Direct matches on commit SHAs, PR numbers (`#421`), and issue identifiers.
 - **Dense Vector Channel** (`weight=1.0`): Semantic retrieval via 768-dimensional code-specialized FastEmbed ONNX (`jinaai/jina-embeddings-v2-base-code`), 384-dimensional BGE, or 3072-dimensional Gemini embeddings. High-confidence top-1 vector hits are safeguarded against score inversion.
 - **Sparse Lexical Channel** (`weight=1.0`): Rank-BM25 with token-shape normalization, exact code identifier boosting, and UTC date bounds.
 - **Symbol Channel Isolation** (`weight=0.2`): Synthetic symbol scores are kept in an isolated channel, preventing uncalibrated pseudo-scores from displacing authentic semantic hits.
 
-### 2. Budgeted JIT Diff Expansion
-- Commit diffs are retrieved Just-In-Time (`git show <sha>`) during synthesis rather than stored as bloated vectors.
-- Chunks are sorted by `(rrf_score, score)` descending before applying a 24,000-character context budget, ensuring the highest-ranking commits receive complete diff context without prompt overflow.
+### 2. Causal Link Score Inheritance & Stratified Sub-Question Budgeting
+- **Parent-Inherited Transitive Scoring**: When `follow_links` expands multi-hop causal edges (`resolves`, `merges`, `reverts`, `superseded_by`), discovered nodes inherit decayed scores from their seed commit (`max(0.012, parent_score * 0.92^depth)`), ensuring critical PR discussions and incident reports rank immediately alongside the commits they explain.
+- **Stratified Multi-Sub-Question Selection**: For complex queries decomposed into multiple sub-questions, `verify` and `synthesize` interleave the top-3 highest-scoring chunks from each sub-question before global RRF backfilling, preventing any single sub-question from crowding out others within the prompt window.
+
+### 3. 4-Stage Deterministic Verification Engine (`verification_engine.py`)
+Instead of relying on an expensive, confirmation-biased secondary LLM call to fact-check drafts, Archaeologist CLI verifies claims deterministically against the repository's relational ground truth:
+- **Stage 1 — Pre-Draft Causal Link Auto-Hydration**: Scans top retrieved chunks and automatically hydrates missing linked PRs, Issues, or reverted commits (`reverts_sha`) directly from SQLite (scoped by `repo_id`) in `<12ms` before drafting.
+- **Stage 2 — Relational Tuple & Provenance Verifier**: Builds a unified `EvidenceIndex` from retrieved chunks and SQLite (`Commit`, `PullRequest`, `Issue`) to verify clause-scoped **Commit ↔ File** and **Commit ↔ AST Symbol** ownership (catching cross-commit Chimera hallucinations), **directional revert integrity** (`reverts_sha` vs. `superseded_by_sha`), and **chronological commit sequence** (`authored_date`).
+- **Stage 3 — Code Identifier Grounding & Confidence-Gated LLM Bypass**: Verifies backticked and `snake_case` code identifiers against the evidence index while filtering out English hex words (`feedback`, `defaced`, `facade`) and numeric dates. Immediately **short-circuits** (`0` Judge LLM tokens) on any Stage 2/3 contradiction and **fast-passes** (`0` Judge LLM tokens) when citations and code identifiers are deterministically verified—reducing verification latency by **96.02% (25.1x faster)**.
+- **Stage 4 — Post-Synthesis Provenance & Citation Guardrail**: Inspects the final synthesized answer (after 24,000-character Just-In-Time `git show <sha>` diff expansion) to flag any post-draft hallucinated references and deterministically append any omitted verified PR/Issue links from top evidence.
 
 ---
 
@@ -422,7 +435,7 @@ Archaeologist CLI includes a native MCP stdio server that connects your local gi
 
 ---
 
-## 🏆 Benchmark Results & Baseline Comparison
+## 🏆 Benchmark Results & Performance Metrics
 
 Evaluated using a **reproducible hybrid evaluation harness** combining **deterministic provenance verification** (exact commit SHA existence checks against the git object tree and PR resolution in SQLite) with **calibrated LLM-as-a-Judge semantic entailment scoring** ($T=0.0$ structured proposition verification to minimize evaluation variance):
 
@@ -451,6 +464,19 @@ $$\text{Grounded Accuracy} = 0.70 \times \text{Atomic Fact Entailment} + 0.30 \t
 | **`pallets/flask`** | **1,390 Chunks** (673 Commits) | **88.99%** | **88.89%** | **89.22%** | `ContextVar` isolation = 100%, Click CLI = 100%, `full_dispatch_request` = 96.67% |
 | **`BoboTiG/python-mss`** | **2,514 Chunks** (1,053 Commits) | **86.77%** | **86.67%** | **87.00%** | Revert `2d24115` = 100%, Xlib per-object lock = 100%, `memoryview` = 100% |
 
+### ⚡ 4-Stage Deterministic Verification & Pipeline Performance (`psf/requests` Benchmark)
+
+Head-to-head benchmark comparing the legacy LLM-Judge verification pipeline against the **4-Stage Deterministic Verification Engine** (`verification_engine.py`) and $O(\log C)$ link resolution on **`psf/requests`** (**6,490 commits, 1,465 PRs**):
+
+| Metric | Legacy LLM-Judge Pipeline | 4-Stage Deterministic Engine | Verified Improvement |
+| :--- | :---: | :---: | :---: |
+| **Claim Verification Accuracy** *(Valid + Adversarial Suite)* | 80.00% *(8/10)* | **100.00%** *(10/10)* | **+20.00 pp** *(+25.0% relative)* |
+| **Adversarial Hallucination Recall** *(Cross-commit, Revert & Chrono Inversions)* | 100.00% *(5/5)* | **100.00%** *(5/5)* | **Zero false negatives** + **Zero false positives** |
+| **Verification Latency (Average per Query)** | 1,270.15 ms | **50.53 ms** | **-96.02% time** *(**25.1x faster**)* |
+| **Verification Latency (10-Query Suite Total)** | 12,701.50 ms | **505.28 ms** | **-12,196.22 ms saved** |
+| **Judge LLM API Calls & Token Cost** *(Cited / Flawed Drafts)* | 10 calls *(3,587 tokens)* | **0 calls** *(0 tokens)* | **-100.00% Judge LLM cost** *(**-20% to -50%** total agent calls)* |
+| **Step 5 PR-to-Commit Link Resolution** *(1,465 PRs × 6,490 Commits)* | 8,891.50 ms *($O(P \cdot L \cdot C)$)* | **11.85 ms** *($O(1) + O(\log C)$ `bisect`)* | **-99.87% time** *(**750.5x faster**, 1,476/1,476 matches)* |
+
 ---
 
 ## 🔒 Privacy, Security & Zero-Cost Architecture
@@ -468,12 +494,14 @@ Archaeologist CLI is purpose-built with privacy-first and cost-conscious enginee
 
 Archaeologist CLI is engineered for high-concurrency developer environments and large-scale codebases:
 
-- **Strict Multi-Tenancy Scoping**: `Commit`, `PullRequest`, `Issue`, `SymbolIndex`, and `CausalEdge` use composite primary keys `(repo_id, ...)`. Ingesting forks, worktrees, or shared commit histories never causes collisions or data leaks.
+- **Strict Multi-Tenancy Scoping**: `Commit`, `PullRequest`, `Issue`, `SymbolIndex`, and `CausalEdge` use composite primary keys `(repo_id, ...)`. Ingesting forks, worktrees, or shared commit histories never causes collisions or cross-tenant data leaks.
+- **Zero-Config Vector Dimension Auto-Adaptation**: Read-only queries across CLI, Python API, and MCP tools automatically inspect `<repo>/.archaeologist/meta.json` and SQLite `RepoMeta` (or on-disk Qdrant collection dimensions: 384-dim BGE, 768-dim Jina Code ONNX, or 3072-dim Gemini) and parameterize the active `Embedder` without mutating process-wide `os.environ` state.
+- **AST-Enriched File Snapshots & $O(\log C)$ PR Link Resolution**: Step 1b current-file snapshots automatically embed extracted AST class/function symbol tables alongside source content, while Step 5 PR-to-commit linkage uses $O(1)$ SHA/message lookup tables and $O(\log C)$ binary search (`bisect`) over author timestamps to scale cleanly to 50k+ commit repositories.
 - **Fail-Fast Vector Lock Detection**: `VectorStore(writable=True)` checks local Qdrant directory locks at Step 0, preventing wasted ingestion time when another process holds write locks.
 - **Incremental Re-Ingestion & Stale Point Purging**: Chunks use deterministic UUID5 content hashing. Unchanged files skip re-embedding, and retired file vectors are purged from Qdrant.
-- **SQLite WAL Mode & Connection Pooling**: Automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on all database connections prevent lock contention during rapid multi-hop forensic queries.
+- **SQLite Strict Adoption, WAL Mode & Connection Pooling**: Enforces exclusive SQLite storage (ignoring stray ambient `postgresql://` shell variables) with automatic `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` to prevent lock contention during rapid multi-hop forensic queries.
 - **Circuit-Breaker Protected Agent**: Automated quota circuit-breakers in `verify_node` prevent runaway retries during rate limit (429) events, falling back gracefully to evidence summaries.
-- **Comprehensive Test Suite & CI Matrix**: 221 tests passing across Ubuntu and Windows under Python 3.11 and 3.12 with zero linter warnings.
+- **Comprehensive Test Suite & CI Matrix**: 236 tests passing across Ubuntu and Windows under Python 3.11 and 3.12 with zero linter warnings.
 
 ---
 

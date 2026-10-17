@@ -2,6 +2,7 @@ import os
 import sys
 
 from archaeologist.agent.state import AgentState
+from archaeologist.agent.verification_engine import apply_post_synthesis_guardrail
 from archaeologist.ingestion.git_parser import get_commit_diff
 from archaeologist.storage.context import current_repo_path_var
 from archaeologist.storage.paths import find_repo_root
@@ -161,9 +162,17 @@ def synthesize_node(state: AgentState) -> dict:
         final_answer = response_text or draft
         if not final_answer or final_answer.startswith("Draft generation failed"):
             final_answer = _format_offline_evidence(question, retrieved)
-        elif unverified and not state.get("verification_passed", True):
-            if "Notice:" not in final_answer and "disclaim" not in final_answer.lower():
-                final_answer += "\n\n> \u26a0\ufe0f *Note: Some historical claims could not be conclusively verified against repository commits/PR evidence.*"
+        else:
+            ordered_chunks = [c for _, c in ranked_retrieved if isinstance(c, dict)]
+            final_answer = apply_post_synthesis_guardrail(
+                final_answer=final_answer,
+                sorted_chunks=ordered_chunks,
+                evidence_text=evidence_text,
+                repo_id=state.get("repo_id"),
+            )
+            if unverified and not state.get("verification_passed", True):
+                if "Notice:" not in final_answer and "disclaim" not in final_answer.lower() and "Note:" not in final_answer:
+                    final_answer += "\n\n> \u26a0\ufe0f *Note: Some historical claims could not be conclusively verified against repository commits/PR evidence.*"
         return {"response": final_answer}
     except Exception as e:
         print(f"Error in synthesize_node: {e}", file=sys.stderr)
