@@ -58,12 +58,38 @@ def verify_node(state: AgentState) -> dict:
     known_shas = set()
     known_prs_issues = set()
 
-    # Sort chunks by relevance score descending to pick top evidence under token budget
-    sorted_chunks = sorted(
-        retrieved,
+    # Sort chunks by relevance score descending, guaranteeing top-3 per sub_question_idx first
+    valid_chunks = [c for c in retrieved if isinstance(c, dict)]
+    by_score = sorted(
+        valid_chunks,
         key=lambda c: float(c.get("rrf_score") or c.get("score") or 0.0),
-        reverse=True
+        reverse=True,
     )
+    sub_q_groups: dict[int, list[dict]] = {}
+    for c in by_score:
+        sq = c.get("sub_question_idx")
+        if sq is not None:
+            sub_q_groups.setdefault(int(sq), []).append(c)
+
+    if len(sub_q_groups) > 1:
+        prioritized = []
+        seen_cids = set()
+        for rank_i in range(3):
+            for sq_idx in sorted(sub_q_groups.keys()):
+                grp = sub_q_groups[sq_idx]
+                if rank_i < len(grp):
+                    cand = grp[rank_i]
+                    cid = cand.get("id")
+                    if cid not in seen_cids:
+                        prioritized.append(cand)
+                        seen_cids.add(cid)
+        for c in by_score:
+            if c.get("id") not in seen_cids:
+                prioritized.append(c)
+                seen_cids.add(c.get("id"))
+        sorted_chunks = prioritized
+    else:
+        sorted_chunks = by_score
 
     total_evidence_chars = 0
     max_evidence_chars = 16000  # ~4000 tokens safe budget to prevent prompt overflow

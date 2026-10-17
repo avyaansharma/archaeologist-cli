@@ -140,35 +140,99 @@ def save_stored_repo_meta(
     except Exception:
         pass
 
+    target_db_urls = []
+    ctx_url = current_db_url_var.get()
+    if ctx_url and ctx_url.startswith("sqlite:///"):
+        target_db_urls.append(ctx_url)
     try:
-        db_url = get_default_db_url(repo_path)
-        if db_url.startswith("sqlite:///"):
+        default_url = get_default_db_url(repo_path)
+        if default_url and default_url.startswith("sqlite:///") and default_url not in target_db_urls:
+            target_db_urls.append(default_url)
+    except Exception:
+        pass
+
+    for db_url in target_db_urls:
+        try:
             db_path = db_url.split("?")[0].replace("sqlite:///", "")
             conn = sqlite3.connect(db_path)
             with conn:
                 conn.execute(
-                    "CREATE TABLE IF NOT EXISTS repo_meta (repo_id TEXT PRIMARY KEY, repo_name TEXT, repo_url TEXT, embedder_provider TEXT, embedder_dimension INTEGER, last_ingested_at TIMESTAMP, key TEXT, value TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)"
+                    "CREATE TABLE IF NOT EXISTS repo_meta (repo_id TEXT PRIMARY KEY, repo_name TEXT, repo_url TEXT, embedder_provider TEXT, embedder_model TEXT, embedder_dimension INTEGER, last_ingested_at TIMESTAMP, key TEXT, value TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)"
                 )
                 # Ensure columns exist if table was already created
-                for col, ctype in [("embedder_provider", "TEXT"), ("embedder_dimension", "INTEGER"), ("last_ingested_at", "TIMESTAMP"), ("key", "TEXT"), ("value", "TEXT")]:
+                for col, ctype in [
+                    ("embedder_provider", "TEXT"),
+                    ("embedder_model", "TEXT"),
+                    ("embedder_dimension", "INTEGER"),
+                    ("last_ingested_at", "TIMESTAMP"),
+                    ("key", "TEXT"),
+                    ("value", "TEXT"),
+                ]:
                     try:
                         conn.execute(f"ALTER TABLE repo_meta ADD COLUMN {col} {ctype}")
                     except Exception:
                         pass
                 conn.execute(
-                    """INSERT INTO repo_meta (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    """INSERT INTO repo_meta (repo_id, repo_url, embedder_provider, embedder_model, embedder_dimension, last_ingested_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
                     ON CONFLICT(repo_id) DO UPDATE SET
                         repo_url = COALESCE(excluded.repo_url, repo_meta.repo_url),
                         embedder_provider = COALESCE(excluded.embedder_provider, repo_meta.embedder_provider),
+                        embedder_model = COALESCE(excluded.embedder_model, repo_meta.embedder_model),
                         embedder_dimension = COALESCE(excluded.embedder_dimension, repo_meta.embedder_dimension),
                         last_ingested_at = COALESCE(excluded.last_ingested_at, repo_meta.last_ingested_at),
                         updated_at = datetime('now')""",
-                    (repo_id, repo_url, embedder_provider, embedder_dimension, last_ingested_at)
+                    (repo_id, repo_url, embedder_provider, embedder_model, embedder_dimension, last_ingested_at)
                 )
             conn.close()
-    except Exception:
-        pass
+        except Exception:
+            pass
+
+
+def get_stored_repo_meta(repo_path: str | None = None, repo_id: str | None = None) -> dict:
+    """Retrieves stored repository metadata from meta.json or SQLite repo_meta table."""
+    if repo_path or not current_db_url_var.get():
+        try:
+            arch_dir = get_archaeologist_dir(repo_path)
+            meta_file = arch_dir / "meta.json"
+            if meta_file.exists():
+                data = json.loads(meta_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data:
+                    if not repo_id or data.get("repo_id") == repo_id:
+                        return data
+        except Exception:
+            pass
+
+    db_url = current_db_url_var.get() or get_default_db_url(repo_path)
+    if db_url and db_url.startswith("sqlite:///"):
+        cand_db = db_url.split("?")[0].replace("sqlite:///", "")
+        if os.path.exists(cand_db):
+            try:
+                conn = sqlite3.connect(cand_db)
+                cursor = conn.cursor()
+                if repo_id:
+                    cursor.execute(
+                        "SELECT repo_id, repo_url, embedder_provider, embedder_model, embedder_dimension, last_ingested_at FROM repo_meta WHERE repo_id = ? LIMIT 1",
+                        (repo_id,),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT repo_id, repo_url, embedder_provider, embedder_model, embedder_dimension, last_ingested_at FROM repo_meta LIMIT 1"
+                    )
+                row = cursor.fetchone()
+                conn.close()
+                if row:
+                    return {
+                        "repo_id": row[0],
+                        "repo_url": row[1],
+                        "embedder_provider": row[2],
+                        "embedder_model": row[3],
+                        "embedder_dimension": row[4],
+                        "last_ingested_at": row[5],
+                    }
+            except Exception:
+                pass
+    return {}
 
 
 def get_stored_repo_id(repo_path: str | None = None, db_path: str | None = None) -> str | None:

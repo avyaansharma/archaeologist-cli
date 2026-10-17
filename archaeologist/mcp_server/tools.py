@@ -60,7 +60,7 @@ def search_history_tool(
 
     embedder = Embedder()
     target_qdrant = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
-    vector_store = VectorStore(vector_size=embedder.dimension, storage_path=target_qdrant)
+    vector_store = VectorStore(vector_size=embedder.dimension, storage_path=target_qdrant, writable=False)
     is_degraded = bool(getattr(vector_store, "degraded", False))
     if is_degraded:
         print("Notice: VectorStore is in degraded mode (locked by another process); falling back to BM25.", file=sys.stderr)
@@ -68,19 +68,23 @@ def search_history_tool(
     dense_hits = []
     try:
         if not is_degraded:
-            query_vectors, success_flags = embedder.embed_texts([query], return_success_flags=True)
-            if query_vectors and success_flags and success_flags[0]:
-                dense_hits = vector_store.search_chunks(
-                    query_vector=query_vectors[0],
-                    limit=30,
-                    file_path=file_path,
-                    date_from=date_from,
-                    date_to=date_to,
-                    source_types=source_types,
-                    repo_id=repo_id
-                )
-            else:
-                print(f"Notice: Query embedding returned fallback mock vector. Skipping dense search for '{query}'", file=sys.stderr)
+            vector_store.init_collection()
+            if getattr(vector_store, "embedder", None) and getattr(vector_store.embedder, "dimension", None) != embedder.dimension:
+                embedder = vector_store.embedder
+            if not getattr(vector_store, "dimension_mismatch", False):
+                query_vectors, success_flags = embedder.embed_texts([query], return_success_flags=True)
+                if query_vectors and success_flags and success_flags[0]:
+                    dense_hits = vector_store.search_chunks(
+                        query_vector=query_vectors[0],
+                        limit=30,
+                        file_path=file_path,
+                        date_from=date_from,
+                        date_to=date_to,
+                        source_types=source_types,
+                        repo_id=repo_id
+                    )
+                else:
+                    print(f"Notice: Query embedding returned fallback mock vector. Skipping dense search for '{query}'", file=sys.stderr)
     except Exception as e:
         print(f"Error in vector search: {e}", file=sys.stderr)
     finally:
@@ -277,12 +281,21 @@ def blame_explain_tool(
 
     commits_data = []
     found_shas = set()
-    try:
-        with get_session_context() as session:
-            for sha in shas:
-                c = session.get(Commit, sha)
-                if c:
-                    found_shas.add(sha)
+    if shas:
+        try:
+            from archaeologist.storage.context import current_repo_id_var
+            from archaeologist.storage.paths import get_stored_repo_id
+            effective_repo_id = current_repo_id_var.get() or get_stored_repo_id(validated_repo) or os.path.basename(validated_repo)
+            with get_session_context() as session:
+                stmt = select(Commit).where(Commit.sha.in_(list(shas)))
+                scoped_stmt = _apply_repo_id_filter(stmt, Commit.repo_id, effective_repo_id)
+                rows = session.exec(scoped_stmt).all()
+                if not rows:
+                    rows = session.exec(stmt).all()
+                for c in rows:
+                    if c.sha in found_shas:
+                        continue
+                    found_shas.add(c.sha)
                     dt_val = c.authored_date.isoformat() if hasattr(c.authored_date, "isoformat") else str(c.authored_date)
                     commits_data.append({
                         "sha": c.sha,
@@ -291,8 +304,8 @@ def blame_explain_tool(
                         "message": c.message,
                         "is_revert": c.is_revert
                     })
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     for sha in shas:
         if sha not in found_shas:

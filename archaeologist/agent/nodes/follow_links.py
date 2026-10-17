@@ -49,11 +49,21 @@ def follow_links_node(state: AgentState) -> dict:
                 seen_source_ids.update({f"#{num}", f"pr#{num}", f"issue#{num}", f"pull#{num}"})
     repo_id = state.get("repo_id")
 
-    # Collect related IDs from retrieved chunks
+    # Collect related IDs from retrieved chunks and track parent seed scores
     related_ids_to_fetch = set()
+    ref_parent_score: dict[str, float] = {}
+    max_seed_score = 0.015
     for chunk in current_chunks:
         if not isinstance(chunk, dict):
             continue
+        c_score = float(chunk.get("rrf_score") or chunk.get("score") or 0.015)
+        if c_score > max_seed_score:
+            max_seed_score = c_score
+        sid = chunk.get("source_id")
+        if sid:
+            s_str = str(sid).strip()
+            ref_parent_score[s_str] = max(ref_parent_score.get(s_str, 0.0), c_score)
+            ref_parent_score[s_str.lower()] = max(ref_parent_score.get(s_str.lower(), 0.0), c_score)
         rel = chunk.get("related_ids") or []
         for ref in rel:
             if not ref:
@@ -63,6 +73,8 @@ def follow_links_node(state: AgentState) -> dict:
             if ref_str in seen_source_ids or ref_lower in seen_source_ids:
                 continue
             related_ids_to_fetch.add(ref_str)
+            ref_parent_score[ref_str] = max(ref_parent_score.get(ref_str, 0.0), c_score)
+            ref_parent_score[ref_lower] = max(ref_parent_score.get(ref_lower, 0.0), c_score)
 
     # Fast-path: Execute SQLite Recursive CTE multi-hop expansion on both current source_ids and related_ids
     from archaeologist.retrieval.causal_graph import traverse_causal_chain
@@ -76,13 +88,18 @@ def follow_links_node(state: AgentState) -> dict:
     expanded_target_ids = set(related_ids_to_fetch)
     for ref_item in list(cte_seeds)[:15]:
         try:
+            seed_base_score = ref_parent_score.get(ref_item) or ref_parent_score.get(ref_item.lower()) or max_seed_score
             chain = traverse_causal_chain(ref_item, repo_id=repo_id, max_depth=2, direction="both")
             for step in chain:
                 node = step.get("target_id") or step.get("source_id")
+                depth = int(step.get("depth") or 1)
                 if node:
                     clean_node = str(node).strip()
                     if clean_node not in seen_source_ids and clean_node.lower() not in seen_source_ids:
                         expanded_target_ids.add(clean_node)
+                        hop_score = seed_base_score * (0.92 ** depth)
+                        ref_parent_score[clean_node] = max(ref_parent_score.get(clean_node, 0.0), hop_score)
+                        ref_parent_score[clean_node.lower()] = max(ref_parent_score.get(clean_node.lower(), 0.0), hop_score)
         except Exception:
             pass
 
@@ -129,6 +146,9 @@ def follow_links_node(state: AgentState) -> dict:
             stmt = _apply_repo_filter(stmt, Chunk.repo_id, repo_id)
             stmt = stmt.limit(5)
 
+            parent_s = ref_parent_score.get(ref) or ref_parent_score.get(ref_lower) or max_seed_score
+            inherited_rrf = round(max(0.012, parent_s * 0.92), 6)
+
             results = session.exec(stmt).all()
             for c in results:
                 if c.id not in seen_ids:
@@ -143,7 +163,7 @@ def follow_links_node(state: AgentState) -> dict:
                         "symbols_modified": c.symbols_modified,
                         "related_ids": c.related_ids,
                         "is_reverted": c.is_reverted,
-                        "rrf_score": 0.0
+                        "rrf_score": inherited_rrf
                     })
                     seen_ids.add(c.id)
 

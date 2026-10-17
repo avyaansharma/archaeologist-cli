@@ -13,7 +13,9 @@ from archaeologist.storage.db import get_session_context
 from archaeologist.storage.models import Chunk
 
 _EMBEDDER_INSTANCE = None
+_EMBEDDER_CACHE_KEY = None
 _VECTOR_STORE_INSTANCE = None
+_VECTOR_STORE_REQUESTED_DIM = None
 
 SYMBOL_STOPWORDS = {
     "http", "httpx", "python", "code", "file", "path", "test", "class", "func", "defs",
@@ -27,22 +29,38 @@ SYMBOL_STOPWORDS = {
 }
 
 def _get_embedder():
-    global _EMBEDDER_INSTANCE
-    if _EMBEDDER_INSTANCE is None:
+    global _EMBEDDER_INSTANCE, _EMBEDDER_CACHE_KEY
+    from archaeologist.storage.context import current_repo_path_var
+    cache_key = (
+        current_repo_path_var.get(),
+        os.getenv("EMBEDDER_PROVIDER", ""),
+        os.getenv("USE_FASTEMBED", ""),
+        os.getenv("FASTEMBED_MODEL", ""),
+        os.getenv("USE_GEMINI_EMBEDDINGS", ""),
+    )
+    if _EMBEDDER_INSTANCE is None or _EMBEDDER_CACHE_KEY != cache_key:
         _EMBEDDER_INSTANCE = Embedder()
+        _EMBEDDER_CACHE_KEY = cache_key
     return _EMBEDDER_INSTANCE
 
 def _get_vector_store(dim: int, storage_path: str | None = None):
-    global _VECTOR_STORE_INSTANCE
+    global _VECTOR_STORE_INSTANCE, _VECTOR_STORE_REQUESTED_DIM
     from archaeologist.storage.context import current_qdrant_path_var
     from archaeologist.storage.paths import get_default_qdrant_path
     target_path = storage_path or current_qdrant_path_var.get() or os.getenv("QDRANT_STORAGE_PATH") or get_default_qdrant_path()
+    current_vs_dim = getattr(_VECTOR_STORE_INSTANCE, "vector_size", None)
+    has_auto_adapted = (
+        _VECTOR_STORE_INSTANCE is not None
+        and getattr(_VECTOR_STORE_INSTANCE, "embedder", None) is not None
+        and _VECTOR_STORE_REQUESTED_DIM == dim
+    )
     if (
         _VECTOR_STORE_INSTANCE is None
         or getattr(_VECTOR_STORE_INSTANCE, "storage_path", None) != target_path
-        or getattr(_VECTOR_STORE_INSTANCE, "vector_size", None) != dim
+        or (current_vs_dim != dim and not has_auto_adapted)
     ):
         _VECTOR_STORE_INSTANCE = VectorStore(vector_size=dim, storage_path=target_path)
+        _VECTOR_STORE_REQUESTED_DIM = dim
         _VECTOR_STORE_INSTANCE.init_collection()
     return _VECTOR_STORE_INSTANCE
 
@@ -345,14 +363,16 @@ def search_node(state: AgentState) -> dict:
 
     retrieved = state.get("retrieved_chunks", [])
     evidence_map = dict(state.get("evidence_by_chunk_id") or {})
+    sub_q_idx = state.get("current_sub_question_index", 0)
 
     new_chunks = []
     for hit in fused_results:
         cid = hit["id"]
         if cid not in evidence_map:
-            chunk_data = hit["payload"]
+            chunk_data = dict(hit["payload"])
             chunk_data["id"] = cid
             chunk_data["rrf_score"] = hit["rrf_score"]
+            chunk_data["sub_question_idx"] = sub_q_idx
             new_chunks.append(chunk_data)
             evidence_map[cid] = chunk_data
 

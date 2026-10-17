@@ -396,12 +396,16 @@ def status(
                     meta_stmt = select(RepoMeta)
                     if repo_id:
                         meta_stmt = meta_stmt.where(_repo_filter(RepoMeta.repo_id, repo_id))
-                    meta_row = session.exec(meta_stmt).first() or session.exec(select(RepoMeta)).first()
+                    meta_row = session.exec(meta_stmt).first()
+                    if not meta_row and not repo_id:
+                        meta_row = session.exec(select(RepoMeta)).first()
                     if meta_row:
                         if meta_row.repo_id:
                             meta_dict["repo_id"] = meta_row.repo_id
                         if meta_row.embedder_provider:
                             meta_dict["embedder_provider"] = meta_row.embedder_provider
+                        if getattr(meta_row, "embedder_model", None):
+                            meta_dict["embedder_model"] = meta_row.embedder_model
                         if meta_row.embedder_dimension:
                             meta_dict["embedder_dimension"] = str(meta_row.embedder_dimension)
                         if meta_row.last_ingested_at:

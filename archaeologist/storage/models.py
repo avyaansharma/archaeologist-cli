@@ -35,6 +35,7 @@ class RepoMeta(SQLModel, table=True):
     repo_name: str | None = None
     repo_url: str | None = None
     embedder_provider: str | None = None
+    embedder_model: str | None = None
     embedder_dimension: int | None = None
     last_ingested_at: datetime | None = None
     key: str | None = None

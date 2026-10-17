@@ -167,18 +167,17 @@ class VectorStore:
                         elif not self.writable and current_size in (384, 768, 3072):
                             from archaeologist.retrieval.embedder import Embedder
                             if current_size == 384:
-                                os.environ["USE_FASTEMBED"] = "true"
-                                os.environ["FASTEMBED_MODEL"] = "BAAI/bge-small-en-v1.5"
-                                os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
+                                self.embedder = Embedder(
+                                    provider="fastembed",
+                                    model_name="BAAI/bge-small-en-v1.5",
+                                )
                             elif current_size == 768:
-                                os.environ["USE_FASTEMBED"] = "true"
-                                os.environ["FASTEMBED_MODEL"] = "jinaai/jina-embeddings-v2-base-code"
-                                os.environ.pop("USE_GEMINI_EMBEDDINGS", None)
+                                self.embedder = Embedder(
+                                    provider="fastembed",
+                                    model_name="jinaai/jina-embeddings-v2-base-code",
+                                )
                             else:
-                                os.environ["USE_GEMINI_EMBEDDINGS"] = "true"
-                                os.environ.pop("USE_FASTEMBED", None)
-                                os.environ.pop("FASTEMBED_MODEL", None)
-                            self.embedder = Embedder()
+                                self.embedder = Embedder(provider="gemini")
                             self.vector_size = current_size
                             self.dimension_mismatch = False
                             print(f"Auto-adapted embedder to match on-disk collection dimension ({self.vector_size}).", file=sys.stderr)

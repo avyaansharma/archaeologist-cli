@@ -108,6 +108,7 @@ def _run_schema_migrations(eng: Engine):
                     "repo_name": "TEXT",
                     "repo_url": "TEXT",
                     "embedder_provider": "TEXT",
+                    "embedder_model": "TEXT",
                     "embedder_dimension": "INTEGER",
                     "last_ingested_at": "TIMESTAMP",
                     "key": "TEXT",

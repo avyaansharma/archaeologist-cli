@@ -328,6 +328,25 @@ class IngestionPipeline:
                         except Exception:
                             mtime_ts = datetime.now(UTC).replace(tzinfo=None)
 
+                        file_symbols = []
+                        try:
+                            extracted_syms = extract_symbols_from_code(content, rel_fpath)
+                            for s_obj in extracted_syms:
+                                s_name = s_obj.get("name")
+                                s_id = s_obj.get("symbol_id")
+                                if s_id and s_id not in file_symbols:
+                                    file_symbols.append(s_id)
+                                if s_name and s_name not in file_symbols:
+                                    file_symbols.append(s_name)
+                        except Exception:
+                            pass
+
+                        sym_summary = ""
+                        if file_symbols:
+                            short_names = [s.split("::")[-1] for s in file_symbols if "::" in s] or file_symbols
+                            dedup_names = list(dict.fromkeys(short_names))[:40]
+                            sym_summary = f"Defined Symbols: {', '.join(dedup_names)}\n"
+
                         if rel_fpath.endswith(".py") or len(content) <= 3000:
                             slices = [(0, content[:3000])]
                         else:
@@ -338,7 +357,8 @@ class IngestionPipeline:
 
                         for chunk_idx, part_text in slices:
                             chunk_id = make_deterministic_chunk_id("file", rel_fpath, chunk_idx, part_text, repo_id=self.repo_id)
-                            chunk_text = f"File {rel_fpath}:\n{part_text}"
+                            header_prefix = sym_summary if chunk_idx == 0 else ""
+                            chunk_text = f"File {rel_fpath}:\n{header_prefix}{part_text}"
                             c_dict = {
                                 "id": chunk_id,
                                 "repo_id": self.repo_id,
@@ -347,7 +367,7 @@ class IngestionPipeline:
                                 "text": chunk_text,
                                 "timestamp": mtime_ts,
                                 "file_paths": [rel_fpath],
-                                "symbols_modified": [],
+                                "symbols_modified": file_symbols if chunk_idx == 0 else [],
                                 "related_ids": [],
                                 "is_reverted": False,
                                 "token_count": token_count(chunk_text),
@@ -536,8 +556,13 @@ class IngestionPipeline:
             all_commits = session.exec(c_query).all()
             all_prs = session.exec(pr_query).all()
 
+            import bisect
             pr_by_commit = {}
             pr_map = {p.number: p for p in all_prs}
+            commit_by_sha = {c.sha: c.sha for c in all_commits}
+            commit_by_prefix7 = {c.sha[:7]: c.sha for c in all_commits}
+            sorted_commit_shas = sorted(c.sha for c in all_commits)
+
             for p in all_prs:
                 if p.merge_commit_sha:
                     pr_by_commit[p.merge_commit_sha] = p.number
@@ -546,9 +571,15 @@ class IngestionPipeline:
                     if not clean_sha or len(clean_sha) < 7:
                         continue
                     pr_by_commit[clean_sha] = p.number
-                    for c in all_commits:
-                        if c.sha.startswith(clean_sha):
-                            pr_by_commit[c.sha] = p.number
+                    if clean_sha in commit_by_sha:
+                        pr_by_commit[clean_sha] = p.number
+                    elif len(clean_sha) == 7 and clean_sha in commit_by_prefix7:
+                        pr_by_commit[commit_by_prefix7[clean_sha]] = p.number
+                    else:
+                        idx_b = bisect.bisect_left(sorted_commit_shas, clean_sha)
+                        while idx_b < len(sorted_commit_shas) and sorted_commit_shas[idx_b].startswith(clean_sha):
+                            pr_by_commit[sorted_commit_shas[idx_b]] = p.number
+                            idx_b += 1
 
             diff_summaries = {}
             is_mocked_summarizer = (
@@ -614,8 +645,7 @@ class IngestionPipeline:
                     if not linked_pr_obj and int(pm) in pr_map:
                         linked_pr_obj = pr_map[int(pm)]
 
-                needs_enrichment = not summary or (linked_pr_obj and f"PR #{linked_pr_obj.number}" not in summary)
-                if needs_enrichment:
+                if not summary:
                     # Provide deterministic, zero-cost high-signal AST structural patch footprint
                     footprint_parts = []
                     if c.files_changed:
@@ -632,6 +662,13 @@ class IngestionPipeline:
                         footprint_parts.append(f"Linked PR #{linked_pr_obj.number}: \"{linked_pr_obj.title}\"{pr_body_snip}")
 
                     summary = "\n".join(footprint_parts) if footprint_parts else f"Commit {c.sha[:7]} (+{c.insertions}/-{c.deletions} lines)"
+                    c.diff_summary = summary
+                    session.add(c)
+                elif linked_pr_obj and f"PR #{linked_pr_obj.number}" not in summary:
+                    pr_body = (linked_pr_obj.body or "").strip().replace("\r\n", " ")
+                    pr_body_snip = f" - {pr_body[:200]}..." if pr_body else ""
+                    pr_line = f"Linked PR #{linked_pr_obj.number}: \"{linked_pr_obj.title}\"{pr_body_snip}"
+                    summary = f"{summary}\n{pr_line}"
                     c.diff_summary = summary
                     session.add(c)
 

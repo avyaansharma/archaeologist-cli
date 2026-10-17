@@ -85,6 +85,17 @@ def traverse_causal_chain(
 
     results = []
     with get_session_context() as session:
+        allow_empty_repo_fallback = not bool(repo_id)
+        if repo_id:
+            try:
+                distinct_repos = session.connection().exec_driver_sql(
+                    "SELECT COUNT(DISTINCT repo_id) FROM causal_edges WHERE repo_id IS NOT NULL AND repo_id != ''"
+                ).scalar() or 0
+                if distinct_repos == 0:
+                    allow_empty_repo_fallback = True
+            except Exception:
+                pass
+
         for seed_var in seed_variants:
             query = """
             WITH RECURSIVE traverse(node_id, depth, edge_type, label, path) AS (
@@ -102,7 +113,7 @@ def traverse_causal_chain(
                       OR repo_id = :repo_id
                       OR LOWER(repo_id) = LOWER(:repo_id)
                       OR LOWER(repo_id) LIKE '%/' || LOWER(:repo_id)
-                      OR repo_id = ''
+                      OR (:allow_empty = 1 AND repo_id = '')
                   )
 
                 UNION
@@ -122,7 +133,7 @@ def traverse_causal_chain(
                       OR e.repo_id = :repo_id
                       OR LOWER(e.repo_id) = LOWER(:repo_id)
                       OR LOWER(e.repo_id) LIKE '%/' || LOWER(:repo_id)
-                      OR e.repo_id = ''
+                      OR (:allow_empty = 1 AND e.repo_id = '')
                   )
             )
             SELECT DISTINCT node_id, depth, edge_type, label, path
@@ -131,7 +142,12 @@ def traverse_causal_chain(
             """
             rows = session.connection().exec_driver_sql(
                 query,
-                {"seed": seed_var, "repo_id": repo_id, "max_depth": max_depth}
+                {
+                    "seed": seed_var,
+                    "repo_id": repo_id,
+                    "max_depth": max_depth,
+                    "allow_empty": 1 if allow_empty_repo_fallback else 0,
+                }
             ).fetchall()
 
             for row in rows:
@@ -160,7 +176,7 @@ def traverse_causal_chain(
                           OR repo_id = :repo_id
                           OR LOWER(repo_id) = LOWER(:repo_id)
                           OR LOWER(repo_id) LIKE '%/' || LOWER(:repo_id)
-                          OR repo_id = ''
+                          OR (:allow_empty = 1 AND repo_id = '')
                       )
 
                     UNION
@@ -180,7 +196,7 @@ def traverse_causal_chain(
                           OR e.repo_id = :repo_id
                           OR LOWER(e.repo_id) = LOWER(:repo_id)
                           OR LOWER(e.repo_id) LIKE '%/' || LOWER(:repo_id)
-                          OR e.repo_id = ''
+                          OR (:allow_empty = 1 AND e.repo_id = '')
                       )
                 )
                 SELECT DISTINCT node_id, depth, edge_type, label, path
@@ -189,7 +205,12 @@ def traverse_causal_chain(
                 """
                 rows_inc = session.connection().exec_driver_sql(
                     query_inc,
-                    {"seed": seed_var, "repo_id": repo_id, "max_depth": max_depth}
+                    {
+                        "seed": seed_var,
+                        "repo_id": repo_id,
+                        "max_depth": max_depth,
+                        "allow_empty": 1 if allow_empty_repo_fallback else 0,
+                    }
                 ).fetchall()
                 for row in rows_inc:
                     results.append({

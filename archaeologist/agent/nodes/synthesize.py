@@ -86,6 +86,33 @@ def synthesize_node(state: AgentState) -> dict:
             reverse=True,
         )
 
+        sub_q_buckets: dict[int, list[tuple[int, dict]]] = {}
+        for idx_r, c_item in ranked_retrieved:
+            if isinstance(c_item, dict) and c_item.get("sub_question_idx") is not None:
+                sub_q_buckets.setdefault(int(c_item["sub_question_idx"]), []).append((idx_r, c_item))
+
+        if len(sub_q_buckets) > 1:
+            stratified: list[tuple[int, dict]] = []
+            seen_s_ids = set()
+            if ranked_retrieved:
+                stratified.append(ranked_retrieved[0])
+                seen_s_ids.add(ranked_retrieved[0][1].get("id") if isinstance(ranked_retrieved[0][1], dict) else None)
+            for round_idx in range(3):
+                for sq_k in sorted(sub_q_buckets.keys()):
+                    bucket = sub_q_buckets[sq_k]
+                    if round_idx < len(bucket):
+                        pair = bucket[round_idx]
+                        cid = pair[1].get("id")
+                        if cid not in seen_s_ids:
+                            stratified.append(pair)
+                            seen_s_ids.add(cid)
+            for pair in ranked_retrieved:
+                cid = pair[1].get("id") if isinstance(pair[1], dict) else None
+                if cid not in seen_s_ids:
+                    stratified.append(pair)
+                    seen_s_ids.add(cid)
+            ranked_retrieved = stratified
+
         for _, c in ranked_retrieved:
             if not isinstance(c, dict):
                 continue
