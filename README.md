@@ -1,8 +1,9 @@
 # 🏺 Archaeologist CLI
 
 <p align="center">
-  <img src="docs/images/cli_ask.svg" alt="Archaeologist CLI — Forensic Causal Investigation in Your Terminal" width="100%" />
+  <video src="docs/images/archaeologist_demo.mp4" width="100%" controls autoplay loop muted></video>
 </p>
+
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11_%7C_3.12-3776AB.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11 | 3.12" /></a>
